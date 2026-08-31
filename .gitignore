@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# uv
+uv.lock.bak
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Local secrets / env
+.env
+
+# Local (developer) opencode config; the published form lives in the README
+opencode.json
