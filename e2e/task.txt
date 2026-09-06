@@ -2,8 +2,8 @@
 Using the macaulay2 MCP tools (such as m2_evaluate), do the following and report the results:
 
 1. Create the polynomial ring R = QQ[x,y,z] and the ideal I = ideal(x^3 - y, x^4 - z).
-2. Compute the Groebner basis of I (remember: use `print generators (gb I)` to see the basis polynomials).
-3. Compute a graded free resolution G = res I and print its Betti table with `betti G`.
+2. Compute the Groebner basis of I (use `print generators (gb I)` to see the basis polynomials).
+3. Compute a graded free resolution G = res I and show its Betti table (use `print betti G`; note that in Macaulay2 a trailing ";" suppresses a statement's output).
 4. In your final answer, state explicitly:
    - the list of Groebner basis polynomials, and
-   - the total Betti numbers (the "total:" row of the Betti table).
+   - the total Betti numbers (the "total:" row of the Betti table, e.g. as four numbers).

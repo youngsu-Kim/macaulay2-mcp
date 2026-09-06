@@ -21,8 +21,9 @@ definitions — persists across m2_evaluate calls within one session; use
 m2_session_reset for a clean slate.
 
 Macaulay2 1.26 idioms you will need:
-* Separate statements with NEWLINES, not semicolons: with "A; B" on one line
-  only the result of B is auto-printed.
+* Separate statements with NEWLINES, not semicolons. A trailing ";" SUPPRESSES
+  that statement's result (e.g. "betti G;" prints nothing) — so to see a
+  result either omit the ";" or use an explicit "print ...".
 * gb I returns a GroebnerBasis object; to SEE the basis polynomials use
   `print generators (gb I)`.
 * res I computes a graded free resolution; `betti res I` prints the Betti table.
@@ -67,8 +68,8 @@ def build_server() -> MCPServer:
 
         State (rings, variables, ideals, ...) persists across calls. M2 errors
         are included in the returned text and do not break the session.
-        Separate statements with newlines (with "A; B" on one line, only B's
-        result is auto-printed).
+        Separate statements with newlines: a trailing ";" suppresses that
+        statement's result (use an explicit "print" to force output).
 
         Args:
             code: Macaulay2 code, e.g. "R = QQ[x,y,z]\nI = ideal(x^3 - y,
@@ -140,20 +141,29 @@ def build_server() -> MCPServer:
         """Load a Macaulay2 package into the session.
 
         Packages stay loaded until the session is reset (M2 has no unload
-        operation). Use reload=True to re-read an already-loaded package from
-        disk (e.g. after updating your M2 installation).
+        operation). Loading an already-loaded package is a harmless no-op:
+        the tool reports that and changes nothing. Use reload=True ONLY when
+        the package's source on disk changed and must be re-read (M2's
+        reload machinery is fragile for packages with dependencies).
 
         Args:
             name: Package name as it appears on the M2 search path, e.g.
                 "HilbertSchemes", "CommutativeAlgebra", "BoijSoederberg".
-            reload: Force re-loading from disk even if already loaded.
+            reload: Re-read the package from disk even if already loaded
+                (package-development workflow; leave False otherwise).
         """
         safe = _escape_m2_string(name.strip())
-        code = f'loadPackage "{safe}"'
-        result = await session.evaluate(code)
-        if "not reloaded; try Reload => true" in result.output and not reload:
-            logger.info("package %s already loaded; retrying with Reload => true", name)
+        if reload:
             result = await session.evaluate(f'loadPackage "{safe}", Reload => true')
+            return result.output
+        result = await session.evaluate(f'loadPackage "{safe}"')
+        if "not reloaded; try Reload => true" in result.output:
+            pkg = name.strip()
+            return (
+                f"Package {pkg!r} is already loaded in this session; nothing "
+                f"to do. (Pass reload=true only if you edited the package "
+                f"source and need it re-read from disk.)"
+            )
         return result.output
 
     @server.tool()

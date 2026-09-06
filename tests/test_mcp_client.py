@@ -78,3 +78,16 @@ async def test_import_file_via_mcp(tmp_path):
         return r2.content[0].text
 
     assert "77" in await _with_server(get)
+
+
+async def test_load_preloaded_package_reports_already_loaded():
+    """Preloaded package => 'already loaded' note, no forced (fragile) reload."""
+
+    async def get(session: ClientSession):
+        result = await session.call_tool("m2_load_package", {"name": "Complexes"})
+        assert not result.is_error
+        return result.content[0].text
+
+    text = await _with_server(get)
+    assert "already loaded" in text
+    assert "error" not in text.lower()

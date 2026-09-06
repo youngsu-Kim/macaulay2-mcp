@@ -60,9 +60,13 @@ e2e/                Docker + Ollama + opencode demo (opt-in: run_e2e.sh)
 ## M2 1.26 idioms relevant to this codebase
 
 * `gb I` returns a GroebnerBasis; see polynomials via `print generators (gb I)`.
-* `A; B` on one line: only B's result auto-prints. Use newlines.
+* A trailing `;` SUPPRESSES a statement's result display (`betti G;` prints
+  nothing); `A; B` on one line shows only B. Use newlines + explicit `print`.
 * M2 strings use double quotes; single quotes are invalid.
 * `unloadPackage` and `importFile` do not exist in 1.26 — package "unload" =
   session reset; file import = evaluate the file's contents (m2_import_file).
 * Preloaded packages error with "not reloaded; try Reload => true";
-  `m2_load_package` already retries with `Reload => true` automatically.
+  `m2_load_package` turns that into an "already loaded" note and NEVER
+  force-reloads — M2's own reload machinery breaks on packages whose source
+  has dependency `needsPackage` lines (verified with PrimaryDecomposition).
+  `reload=true` is the caller's explicit opt-in for that fragile path.

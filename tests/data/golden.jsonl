@@ -10,3 +10,5 @@
 {"id": "error_surface", "code": "thisDoesNotExist(1)", "expect": ["error"], "note": "M2 errors (stderr, merged in stream order) must appear in the result"}
 {"id": "load_package", "code": "loadPackage \"BernsteinSato\"", "expect": ["BernsteinSato", "Package"], "note": "Loading a not-preloaded package reports the Package object"}
 {"id": "help_lookup", "code": "help \"groebnerBasis\"", "expect": ["basis, as a matrix"], "note": "In-session documentation lookup"}
+{"id": "dim_ring", "code": "R = QQ[x,y,z]\ndim R", "expect": ["o3 = 3"], "note": "Krull dimension of a polynomial ring; fresh-session indices are deterministic: probe=i1, R=i2, dim=i3"}
+{"id": "dim_quotient", "code": "R = QQ[x,y,z]\nI = ideal(x^3 - y, x^4 - z)\ndim (R/I)", "expect": ["o4 = 1"], "note": "monomial curve (3,4) is a curve; note the required parentheses: 'dim R/I' parses differently"}

@@ -85,16 +85,26 @@ Self-test passed. The MCP server is ready to use.
 
 ## Try this now
 
-With the server connected, just ask (in Claude Code / opencode / ...):
+With the server connected, just ask (in Claude Code / opencode / ...). These
+are real tested prompts; the exact outputs are in
+[`examples/example-prompts.md`](examples/example-prompts.md):
 
 * “Create `R = QQ[x,y,z]` and `I = ideal(x^3 - y, x^4 - z)`. Compute the
   Groebner basis and a graded free resolution; show the Betti table.”
-* “Load the `BoijSoederberg` package and compute the Betti splitting of `res I`.”
-* “Look up the documentation for `HilbertPolynomial` and use it on my ideal.”
+* “What are the dimensions of `R` and of `R/I`?” *(→ `3` and `1`: the monomial
+  curve is a curve)*
+* “Load the `BoijSoederberg` package and decompose the Betti diagram of
+  `res I` into pure diagrams (`decomposeBetti`).”
+* “Look up the documentation for `hilbertPolynomial` and compute it for the
+  twisted cubic `(x*z - y^2, y*w - z^2, x*w - y*z)`.” *(→ `3T + 1`. Note the
+  lowercase `h`: M2's CamelCase doc pointer `HilbertPolynomial` is an empty
+  stub.)*
+* “Compute the primary decomposition of `ideal(x^2, x*y)`.”
 * “Here is my `mycode.m2` file — import it into the session and call
   `myFunction`.” (state is kept between calls)
 
-A full genuine transcript: [`examples/groebner-demo.md`](examples/groebner-demo.md).
+A full genuine transcript of the first prompt:
+[`examples/groebner-demo.md`](examples/groebner-demo.md).
 
 ## What the server provides
 
