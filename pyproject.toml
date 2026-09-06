@@ -4,13 +4,13 @@ version = "0.1.0"
 description = "MCP server for Macaulay2: Groebner bases, resolutions, Betti tables, and more, for Claude Code, opencode, and any MCP client"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
-authors = [{ name = "m2-mcp contributors" }]
+license = "GPL-3.0-or-later"
+authors = [{ name = "Youngsu Kim" }]
 keywords = ["macaulay2", "mcp", "model-context-protocol", "algebraic-geometry", "computer-algebra"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: Mathematics",
 ]

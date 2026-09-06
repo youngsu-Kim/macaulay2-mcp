@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "macaulay2-mcp: a Model Context Protocol server for a persistent Macaulay2 session"
+authors:
+  - family-names: Kim
+    given-names: Youngsu
+repository-code: https://github.com/youngsu-Kim/macaulay2-mcp
+license: GPL-3.0-or-later
+version: 0.1.0
+date-released: 2026-09-06

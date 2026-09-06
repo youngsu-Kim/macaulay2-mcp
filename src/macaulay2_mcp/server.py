@@ -30,7 +30,13 @@ Macaulay2 1.26 idioms you will need:
   result either omit the ";" or use an explicit "print ...".
 * gb I returns a GroebnerBasis object; to SEE the basis polynomials use
   `print generators (gb I)`.
-* res I computes a graded free resolution; `betti res I` prints the Betti table.
+* res I computes the graded free resolution of the ideal I (equivalently of S/I);
+  `res (R/I)` is a classic mistake — M2 has no method on quotient rings.
+  `betti res I` prints the table.
+* Do NOT assign to function names: `gb`, `res`, `betti`, `ideal` are protected,
+  so `gb = gb I` errors ("assignment to protected global variable"); write
+  `G = gb I`. And a statement ending in ";" computes but displays nothing —
+  the statement whose result you want to see must have NO trailing ";".
 * Ring elements print with superscripts in plain text (e.g. `x^2` may show as a
   raised 2); parse accordingly.
 * M2 strings use DOUBLE quotes ("..."), not single quotes.

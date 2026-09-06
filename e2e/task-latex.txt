@@ -1,0 +1,7 @@
+Let $S = \mathbb{Q}[x,y,z]$ and $I = (x^3 - y, x^4 - z)$.
+
+First, compute a Groebner basis of $I$ and list its elements.
+Then, compute the Betti table of a free resolution of $S/I$.
+Report the total Betti numbers of the resolution as a sequence $(b_0, b_1, b_2, b_3)$.
+
+Finish with one line exactly: TOTAL_BETTI_DONE <numbers>

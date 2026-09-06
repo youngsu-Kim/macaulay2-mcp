@@ -14,11 +14,14 @@
 #
 # Environment:
 #   E2E_MODEL     ollama model tag (default: qwen3:4b)
+#   TASK_FILE     prompt file inside e2e/ (default: task.txt; see task-latex.txt)
 #   E2E_ATTEMPTS  how many retries (small models are flaky; default 3)
 #
 # Outputs land in e2e/results/ (transcripts + logs).
 set -euo pipefail
 cd "$(dirname "$0")"
+# optional: TASK_FILE (relative to e2e/) swaps the prompt file
+TASK_FILE="${TASK_FILE:-task.txt}"
 
 MODEL="${E2E_MODEL:-qwen3:4b}"
 ATTEMPTS="${E2E_ATTEMPTS:-3}"
@@ -98,14 +101,14 @@ for attempt in $(seq 1 "${ATTEMPTS}"); do
     # swap in the provider config pointing at host Ollama (Metal); the task
     # text is passed as a positional arg so no shell re-interprets it
     run_ok=0
-    docker compose run --rm agent sh -c \
+    docker compose run --rm --no-deps agent sh -c \
       'cp /workspace/m2-mcp/e2e/opencode.native.json /workspace/opencode.json && exec opencode run --auto --print-logs --format json "$1"' \
-      _ "$(cat task.txt)" \
+      _ "$(cat "$TASK_FILE")" \
       > "results/events-${attempt}.jsonl" 2> "results/stderr-${attempt}.log" || run_ok=1
   else
     run_ok=0
     docker compose run --rm agent \
-      opencode run --auto --print-logs --format json "$(cat task.txt)" \
+      opencode run --auto --print-logs --format json "$(cat "$TASK_FILE")" \
       > "results/events-${attempt}.jsonl" 2> "results/stderr-${attempt}.log" || run_ok=1
   fi
   if [ "$run_ok" = "1" ]; then

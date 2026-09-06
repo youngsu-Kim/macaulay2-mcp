@@ -37,10 +37,18 @@ E2E_MODEL=qwen3:8b E2E_ATTEMPTS=2 ./run_e2e.sh   # try another model
 
 First run downloads the model (qwen3:4b ≈ 2.6 GB, qwen3:14b ≈ 9 GB).
 
-## The demo task (`task.txt`)
+## The demo tasks
 
-Create `R = QQ[x,y,z]`, `I = ideal(x^3 - y, x^4 - z)`, compute the Groebner
-basis and a graded free resolution with Betti table, and report both.
+* `task.txt` — asks for the same computation with explicit M2 syntax hints
+  (`R = QQ[x,y,z]`, `I = ideal(x^3 - y, x^4 - z)`).
+* `task-latex.txt` — the same job phrased the way a mathematician writes it:
+  `Let $S = \mathbb{Q}[x,y,z]$ and $I = (x^3 - y, x^4 - z)$ ... list its
+  elements ... Betti table of a free resolution of $S/I$`. No M2 syntax.
+
+Swap prompts with `TASK_FILE=task-latex.txt ./run_e2e.sh`.
+`soak.sh` cycles both tasks across several models for `SOAK_HOURS` hours and
+appends one TSV row per cycle to `results/soak-summary.tsv` (it also removes
+orphaned `e2e-*` containers between cycles; it kills nothing on the host).
 
 ## What the assertions check
 
@@ -70,3 +78,28 @@ use `print betti G`) failed the Betti check 6/6 — the model sent
 `betti G;`, M2 printed nothing, and the model hallucinated the numbers.
 Lesson: for small models, encode M2's display rules in the tool
 instructions, not just in the prompt.
+
+## LaTeX-prompt reliability (soak, 2026-09-06, macOS Metal, M2 1.26.06)
+
+49 cycles of `SOAK_HOURS=3 e2e/soak.sh` (1 attempt per cycle), all models
+local via host Ollama:
+
+| model | `task.txt` (M2 syntax) | `task-latex.txt` (plain math) |
+|---|---|---|
+| qwen3.5:4b | 7/8 | 0/9 |
+| qwen3.6:27b | 8/8 | 0/8 |
+| qwen3.8:27b | 8/8 | 0/8 |
+
+What the transcripts show for the LaTeX task: **notation translation is
+reliable** (every model correctly emitted `R = QQ[x,y,z]; I = ideal(x^3 - y,
+x^4 - z)`), but the models then (a) drop one of the two sub-requests — the
+Groebner listing failed in 24/25 runs, (b) chain statements on one line ending
+in `;`, silently suppressing the table (17/25), and (c) answer from memory
+instead of output when a display comes back empty (hallucinated totals).
+These persist across 27B models and despite INSTRUCTIONS warnings against
+each pattern.
+
+Interpretation: with small/local models, say what you want in plain math **and**
+keep the M2 commands in view (the `task.txt` style) — or verify the assistant's
+input lines against the output. Frontier cloud models handle the LaTeX form
+better, but we have not measured them.
