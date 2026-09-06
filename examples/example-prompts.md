@@ -197,3 +197,40 @@ setup (ring/ideal definitions) in the same code block.
 
 Right after the timeout, the session is healthy again (`1 + 1` → `2`), but
 empty by design — retries must be self-contained.
+
+## 9. Stopping a running computation (m2_interrupt)
+
+> That computation is taking too long — cancel it.
+
+The assistant calls `m2_interrupt` *while the runaway `m2_evaluate` is still
+in flight* (two concurrent requests on one connection; the interrupt is
+lock-free by design):
+
+```
+m2_evaluate("while true do()", timeout_s=60)      <- still running...
+m2_interrupt()
+```
+
+`m2_interrupt` returns:
+
+```
+Interrupt sent (SIGINT). If the computation is interruptible, the running
+m2_evaluate will return shortly with an 'error: interrupted' note and the
+session keeps all earlier definitions.
+```
+
+and the waiting `m2_evaluate` call completes gracefully:
+
+```
+i6 : while true do()
+stdio:6:6:(3):[1]: error: interrupted
+
+NOTE: the computation was stopped on request (m2_interrupt). Everything
+defined by statements that completed before the interrupted one is still
+available; the session is ready for new input.
+```
+
+Crucially, **nothing was lost** — `keepMe = 99` defined before the runaway
+loop still evaluates to `99` in the same session. Contrast with §8: a
+*timeout* kills and restarts the kernel (state gone); an *interrupt* aborts
+only the current statement (state kept).

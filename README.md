@@ -108,11 +108,12 @@ A full genuine transcript of the first prompt:
 
 ## What the server provides
 
-Seven tools, one shared M2 session:
+Eight tools, one shared M2 session:
 
 | Tool | What it does |
 |---|---|
 | `m2_evaluate(code, timeout_s?)` | Evaluate M2 code in the persistent session. State carries over between calls. |
+| `m2_interrupt()` | Stop a running computation: M2 aborts at a safe checkpoint and **keeps** all earlier definitions (unlike a timeout, which restarts the kernel). |
 | `m2_session_reset()` | Restart the kernel — a clean slate. |
 | `m2_help(topic)` | M2 documentation lookup (`help "topic"`). |
 | `m2_run_script(path, timeout_s?)` | Run a `.m2` file in a fresh, isolated M2 process (batch mode; use `print` for output). |
@@ -133,6 +134,11 @@ output, so your assistant can read and react to them.
   runaway or infinite computations. A timeout is *not* an M2 error: the
   message says so, and explains how to retry with a larger `timeout_s`
   (self-contained code, since the session is restarted).
+* **Stopping on demand.** `m2_interrupt` sends a real software interrupt
+  (SIGINT): M2 aborts the current computation at a safe checkpoint and the
+  running call returns with `error: interrupted` — **all earlier definitions
+  survive**. Only the timeout backstop (for computations that ignore the
+  interrupt) restarts the kernel and loses state.
 * **Unbalanced input** (e.g. a missing `}`) is rejected up front instead of
   hanging, and syntax errors that desynchronize the session trigger an
   automatic restart.
@@ -170,7 +176,7 @@ tools in action.
 | `selftest` says *Macaulay2 was not found* | Install M2 (table above) or set `M2_BIN`. |
 | *Found Macaulay2 1.22.05, but ... only supports 1.26.x* | Upgrade: `brew upgrade macaulay2` or `sudo apt update && sudo apt install macaulay2` (with the M2 PPA added). |
 | Server doesn't appear in the client | Restart the client; run `uvx macaulay2-mcp selftest` manually to see errors; check `claude mcp list` (Claude Code) or `opencode mcp list` (opencode). |
-| A computation times out | Retry with a larger `timeout_s` (ask your assistant to), or write a script and use `m2_run_script`. |
+| A computation times out | Retry with a larger `timeout_s` (ask your assistant to), or write a script and use `m2_run_script`. To cancel a running computation while keeping session state, have the assistant call `m2_interrupt`. |
 | Something about an unbalanced `}` | Your (or the assistant's) code was missing a closing bracket — the error message says so; just fix and resend. |
 
 ## Roadmap

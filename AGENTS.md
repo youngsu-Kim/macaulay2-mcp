@@ -32,6 +32,12 @@ uv run macaulay2-mcp         # run the MCP server on stdio
    then consume the deterministic result `oN = 1`). Blank or comment-only
    lines do NOT terminate a logical M2 input (they dangle and absorb the
    next line). Keep the marker a *complete statement* — never a comment.
+   SIGINT (m2_interrupt) works in pipe mode: M2 prints `error: interrupted`,
+   prompt indices stay in sync, the buffered marker still executes (the
+   in-flight evaluate() returns normally), and state survives. SIGINT while
+   idle only emits a bare `iN :` line — filtered from evaluation blocks.
+   `M2Session.interrupt()` is LOCK-FREE by design (evaluate() holds the
+   session lock while running); never make it take the lock.
 3. **Golden outputs:** `tests/data/golden.jsonl` pins observable M2 1.26
    behaviour (rendering quirks included). If M2 output changes, review the
    dataset deliberately instead of letting it rot.
@@ -49,7 +55,7 @@ uv run macaulay2-mcp         # run the MCP server on stdio
 src/macaulay2_mcp/
   config.py   binary discovery, version gate, pinned flags/timeouts
   kernel.py   M2Session (persistent kernel), M2ScriptRunner (batch), messages
-  server.py   the 7 MCP tools + INSTRUCTIONS (LLM-facing, keep accurate)
+  server.py   the 8 MCP tools + INSTRUCTIONS (LLM-facing, keep accurate)
   cli.py      entry point: server mode | selftest | --version
 tests/
   test_kernel.py    protocol tests (skip if M2 1.26 missing)

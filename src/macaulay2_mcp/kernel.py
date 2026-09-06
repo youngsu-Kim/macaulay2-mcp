@@ -25,6 +25,12 @@ Protocol (verified against M2 1.26.06 over piped stdin/stdout):
   input. Code with a syntax error that leaves the input unbalanced swallows
   the marker line; the resulting "syntax error" on stderr is detected and
   the session is restarted to resynchronize.
+* SIGINT (see :meth:`M2Session.interrupt`) aborts the current input at M2's
+  safe checkpoints: ``error: interrupted`` is printed, prompt indices stay
+  in sync, and the buffered marker still executes — so an in-flight
+  ``evaluate()`` completes its handshake and returns normally. SIGINT while
+  the kernel merely waits for input only emits a bare prompt line (filtered
+  from evaluation blocks). Both behaviours verified on M2 1.26.06.
 """
 
 from __future__ import annotations
@@ -32,6 +38,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import signal
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,6 +60,12 @@ logger = logging.getLogger("macaulay2_mcp.kernel")
 
 class KernelCrashed(Exception):
     """The M2 process exited unexpectedly."""
+
+
+# A line that is exactly a bare prompt (``iN :``). M2 emits these when it
+# receives SIGINT while waiting for input; they carry no information and
+# would otherwise pollute the next evaluation's block.
+_BARE_PROMPT_RE = re.compile(r"^i\d+ :[ \t]*\r?$")
 
 
 def ends_unbalanced(code: str) -> bool:
@@ -97,6 +110,7 @@ class EvalResult:
     output: str
     timed_out: bool = False
     crashed: bool = False
+    interrupted: bool = False
     stderr: str = ""
 
 
@@ -155,8 +169,28 @@ class M2Session:
         self._prompt_index = 0
         self._lock = asyncio.Lock()
         self._config_error: str | None = None
+        self._busy = False
 
     # ------------------------------------------------------------------ setup
+
+    def interrupt(self) -> bool:
+        """Send SIGINT to the kernel if (and only if) a computation is running.
+
+        Lock-free by design: called from another coroutine while ``evaluate()``
+        awaits M2 output. M2's default interrupt handling aborts the current
+        input at a safe checkpoint and returns to the prompt; state defined by
+        earlier completed statements survives. Verified on M2 1.26.06.
+
+        Returns True if a signal was sent, False if nothing was running.
+        """
+        if not self._busy or self._proc is None or self._proc.returncode is not None:
+            return False
+        try:
+            self._proc.send_signal(signal.SIGINT)
+        except ProcessLookupError:
+            return False
+        logger.info("sent SIGINT to the M2 kernel")
+        return True
 
     def _ensure_config(self) -> M2Config:
         if self._config is None:
@@ -259,6 +293,9 @@ class M2Session:
                     marker_index = int(m.group(1))
                     self._prompt_index = max(self._prompt_index, marker_index)
                     continue
+                if _BARE_PROMPT_RE.match(text):
+                    # artifact of a SIGINT received while M2 waited for input
+                    continue
                 lines.append(text)
             else:
                 m = result_re.match(text)
@@ -305,8 +342,14 @@ class M2Session:
                 )
             marker = self._new_marker()
             logger.debug("evaluating %d chars of M2 code (timeout %ds)", len(code), timeout_s)
+            self._busy = True
             try:
                 block = await self._send_and_wait(code, marker, timeout_s)
+            except asyncio.CancelledError:
+                # The client cancelled this call: ask M2 to stop too (graceful,
+                # keeps state) and let the cancellation propagate.
+                self.interrupt()
+                raise
             except asyncio.TimeoutError:
                 logger.warning("evaluation timed out after %ds; restarting kernel", timeout_s)
                 await self._kill()
@@ -324,6 +367,8 @@ class M2Session:
                     ),
                     crashed=True,
                 )
+            finally:
+                self._busy = False
             # stderr is merged into the stream, so M2's error text is already in
             # `block`, in true stream order.
             if "syntax error" in block:
@@ -344,7 +389,17 @@ class M2Session:
             output = block.strip()
             if not output:
                 output = "(the code ran successfully and produced no output)"
-            return EvalResult(output=output)
+            # stderr is merged in-stream, so an m2_interrupt shows up as
+            # "error: interrupted" inside `block`.
+            interrupted = "error: interrupted" in block
+            if interrupted:
+                output += (
+                    "\n\nNOTE: the computation was stopped on request "
+                    "(m2_interrupt). Everything defined by statements that "
+                    "completed before the interrupted one is still available; "
+                    "the session is ready for new input."
+                )
+            return EvalResult(output=output, interrupted=interrupted)
 
     async def reset(self) -> str:
         """Restart the kernel, discarding all session state."""
@@ -421,6 +476,14 @@ class M2ScriptRunner:
                 message = f"{partial}\n\n{message}"
             return ScriptResult(output=message, exit_code=proc.returncode, timed_out=True)
         return ScriptResult(
-            output=stdout.decode("utf-8", errors="replace").strip(),
+            output=_strip_trailing_prompt(stdout.decode("utf-8", errors="replace")),
             exit_code=proc.returncode,
         )
+
+
+def _strip_trailing_prompt(text: str) -> str:
+    """M2 prints a bare ``iN :`` prompt when batch-mode stdin hits EOF.
+
+    It is protocol noise for callers of m2_run_script; drop it.
+    """
+    return re.sub(r"\s*i\d+ :[ \t\r\n]*$", "", text).strip()

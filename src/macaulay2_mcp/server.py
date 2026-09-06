@@ -39,6 +39,12 @@ returns a TIMED OUT message, the computation was still running (no M2 error);
 retry with a larger timeout_s, and make the retried code self-contained (after
 a session timeout the session is restarted, so include ring/ideal setup again).
 For very long jobs, write code to a file and use m2_run_script instead.
+
+Stopping: if the user wants to cancel a still-running computation, call
+m2_interrupt — M2 aborts the current input at a safe checkpoint, the running
+m2_evaluate returns with "error: interrupted", and all earlier definitions
+stay available. (A timeout, by contrast, kills and restarts the kernel and
+loses session state.)
 """
 
 
@@ -52,9 +58,9 @@ def build_server() -> MCPServer:
         title="Macaulay2",
         version=__version__,
         description=(
-            "Persistent Macaulay2 1.26 session: evaluate M2 code, inspect "
-            "results, load packages, import local .m2 files, and run "
-            "self-contained scripts."
+            "Persistent Macaulay2 1.26 session: evaluate M2 code, interrupt "
+            "running computations, inspect results, load packages, import "
+            "local .m2 files, and run self-contained scripts."
         ),
         instructions=INSTRUCTIONS,
     )
@@ -81,6 +87,31 @@ def build_server() -> MCPServer:
         """
         result = await session.evaluate(code, timeout_s)
         return result.output
+
+    @server.tool()
+    async def m2_interrupt() -> str:
+        """Interrupt the Macaulay2 computation currently running in the session.
+
+        Use this when the user wants to cancel or stop a long-running
+        m2_evaluate. It sends a software interrupt (SIGINT), which M2
+        handles at safe checkpoints: the running m2_evaluate call returns
+        with an "error: interrupted" message, and everything defined by
+        statements that completed BEFORE the interrupted one stays
+        available — the session does not restart.
+
+        If nothing is running, this is a harmless no-op. In the rare case
+        of a computation that ignores the interrupt (deep engine loops),
+        the running m2_evaluate's own timeout_s remains the backstop: it
+        kills and restarts the kernel on expiry.
+        """
+        if session.interrupt():
+            return (
+                "Interrupt sent (SIGINT). If the computation is interruptible, "
+                "the running m2_evaluate will return shortly with an "
+                "'error: interrupted' note and the session keeps all earlier "
+                "definitions."
+            )
+        return "Nothing is running in the Macaulay2 session; nothing to interrupt."
 
     @server.tool()
     async def m2_session_reset() -> str:

@@ -1,3 +1,4 @@
+import asyncio
 import stat
 from pathlib import Path
 
@@ -103,6 +104,32 @@ async def test_timeout_kills_and_restarts(session):
     assert "2" in fresh.output
 
 
+async def test_interrupt_stops_runaway_and_preserves_state(session):
+    await session.evaluate("keepAfterInterrupt = 99")
+    task = asyncio.create_task(session.evaluate("while true do()", timeout_s=30))
+    for _ in range(300):  # wait for the evaluation to enter busy state
+        if session._busy:
+            break
+        await asyncio.sleep(0.05)
+    assert session._busy, "evaluate never became busy"
+    assert session.interrupt() is True
+    result = await asyncio.wait_for(task, timeout=20)
+    assert result.interrupted
+    assert "error: interrupted" in result.output
+    assert "stopped on request" in result.output
+    # unlike a timeout, an interrupt keeps session state
+    after = await session.evaluate("keepAfterInterrupt")
+    assert "99" in after.output
+
+
+async def test_interrupt_when_idle_is_noop(session):
+    # never started
+    assert session.interrupt() is False
+    # started but nothing running
+    await session.evaluate("1 + 1")
+    assert session.interrupt() is False
+
+
 async def test_unbalanced_input_rejected_upfront(session):
     result = await session.evaluate("y = {1,")
     assert "unbalanced" in result.output.lower()
@@ -143,6 +170,9 @@ async def test_run_script(tmp_path, session):
     result = await runner.run(str(script))
     assert result.timed_out is False
     assert "0" in result.output
+    # batch-mode EOF prints a bare "i1 :" prompt — stripped from the result
+    assert not result.output.rstrip().endswith(":")
+    assert "i1 :" not in result.output
 
 
 async def test_run_script_missing_file(session):
