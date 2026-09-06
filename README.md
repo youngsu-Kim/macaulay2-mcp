@@ -4,8 +4,9 @@ Use [Macaulay2](https://macaulay2.com) from your AI coding assistant.
 
 `macaulay2-mcp` is an [MCP](https://modelcontextprotocol.io) (Model Context Protocol)
 server that gives Claude Code, [opencode](https://opencode.ai), Claude Desktop,
-Gemini CLI, and any other MCP client a **persistent Macaulay2 session**: ask
-your assistant to compute Groebner bases, resolutions, Betti tables, primary
+[LM Studio](https://lmstudio.ai), Gemini CLI, and any other MCP client a
+**persistent Macaulay2 session**: ask your assistant to compute Groebner
+bases, resolutions, Betti tables, primary
 decompositions, Hilbert polynomials — and it runs the computations in a real
 M2 kernel, with state (rings, ideals, your definitions) preserved across calls.
 
@@ -71,9 +72,20 @@ entries live in `~/.homebrew/trust.json` and are reversible at any time:
   (If that doesn't work, use the absolute path from `which uvx`.)
 * **Gemini CLI** — `gemini mcp add macaulay2 -- uvx macaulay2-mcp` (or add an
   `mcpServers` entry to `~/.gemini/settings.json`).
+* **LM Studio (GUI chat)** — one-click "Add to LM Studio" button and setup
+  in [Use it in a GUI](#use-it-in-a-gui-lm-studio-macos-apple-silicon).
 
 `uvx` downloads and runs the server in an isolated environment on first use —
 there is nothing else to install, and no configuration required.
+
+> **What are `uv` and `uvx`?** [uv](https://docs.astral.sh/uv/) is a fast
+> Python package manager from Astral. `uvx` is its "just run it" mode: it
+> downloads `macaulay2-mcp` from PyPI into a private, throwaway virtual
+> environment and launches it — no install, no activation, no stray
+> dependencies (Python's equivalent of `npx`). Prefer not to use uv?
+> `pipx install macaulay2-mcp` then `pipx runpip`-style invocation, or
+> `pip install --user macaulay2-mcp` and use the bare `macaulay2-mcp`
+> command in every snippet below.
 
 **Check that everything is wired up:**
 
@@ -217,6 +229,72 @@ environment for the server. The only other settings are
 `MACAULAY2_MCP_OS_ALLOW` (comma-separated M2 OS-symbols to unblock); v0.1
 intentionally has no others.
 
+## Use it in a GUI: LM Studio (macOS, Apple Silicon)
+
+[LM Studio](https://lmstudio.ai) (≥ 0.3.17) is itself an MCP host: add this
+server and **local models can call Macaulay2 straight from the chat window** —
+no terminal agent involved. This section targets **Apple Silicon Macs with
+Homebrew**; Intel Macs follow the same steps with `/usr/local` paths, and on
+Linux the CLI clients above are the documented route.
+
+**Prerequisites (one line each):**
+```sh
+brew install Macaulay2/tap/macaulay2   # M2 1.26 (LM Studio's GUI env is minimal — see note)
+brew install uv                        # provides /opt/homebrew/bin/uvx
+```
+
+**Install:** switch to the **Program** tab (right sidebar) →
+**Install → Edit mcp.json** → paste:
+
+```json
+{
+  "mcpServers": {
+    "macaulay2": {
+      "command": "/opt/homebrew/bin/uvx",
+      "args": ["macaulay2-mcp"],
+      "env": { "MACAULAY2_MCP_JOURNAL": "/Users/YOURUSERNAME/m2-journals" }
+    }
+  }
+}
+```
+
+Or one click:
+
+[![Add MCP Server macaulay2 to LM Studio](https://files.lmstudio.ai/deeplink/mcp-install-light.svg)](https://lmstudio.ai/install-mcp?name=macaulay2&config=eyJjb21tYW5kIjoiL29wdC9ob21lYnJldy9iaW4vdXZ4IiwiYXJncyI6WyJtYWNhdWxheTItbWNwIl0sImVudiI6eyJNQUNBVUxBWTJfTUNQX0pPVVJOQUwiOiIvVXNlcnMvWU9VUlVTRVJOQU1FL20yLWpvdXJuYWxzIn19)
+
+Why the snippet looks different from the CLI ones (each choice is yours to
+change):
+
+* **Absolute `/opt/homebrew/bin/uvx`** — GUI apps don't inherit your shell's
+  PATH, so a bare `"uvx"` often fails to launch. (If you installed uv via the
+  astral script instead of brew, use `~/.local/bin/uvx`.)
+* **No `M2_BIN` needed** — the server looks for Macaulay2 in the standard
+  Homebrew locations automatically, which is exactly what a minimal GUI PATH
+  requires. Non-standard installs: add `"M2_BIN": "/path/to/M2"` to `env`.
+* **Explicit `MACAULAY2_MCP_JOURNAL`** — GUI-launched servers have an
+  unpredictable working directory, so the journal's default `./.m2-mcp/`
+  would land somewhere mysterious; the snippet pins it to a folder you chose
+  (replace `YOURUSERNAME`). `"MACAULAY2_MCP_JOURNAL": "off"` also works.
+
+Then enable the server in the Program tab, pick a **tool-calling-capable**
+model, and try:
+
+> Use Macaulay2 to compute the Groebner basis of ideal(x^3 - y, x^4 - z)
+> in QQ[x,y,z].
+
+You should see a `m2_evaluate` tool call in the chat's tool activity, then
+the basis. Honest caveat measured in our own Docker E2E: small local models
+vary a lot at tool calling and at transcribing tables — the server's built-in
+instructions, error menus, and output journal (LM Studio shows up there as
+the connected client) are designed to help weaker models, not rescue every
+case. If a computation is refused by the OS gate, the same
+`MACAULAY2_MCP_OS_ALLOW` env applies here.
+
+> The install button and every `uvx macaulay2-mcp` command go live when the
+> package is published to PyPI (v0.1.0); until then, from a checkout you can
+> point the `command` at `uv` with `--directory /path/to/m2_mcp_project` and
+> `["run", "macaulay2-mcp"]` as a preview.
+
 ## Try it in your browser (no install)
 
 [![Launch on Binder](https://mybinder.org/badge.svg)](https://mybinder.org/v2/gh/YOUR-USERNAME/m2-mcp-binder/main?urlpath=lab/tree/demo.ipynb)
@@ -237,6 +315,7 @@ tools in action.
 | Something about an unbalanced `}` | Your (or the assistant's) code was missing a closing bracket — the error message says so; just fix and resend. |
 | A `.m2-mcp/` folder appeared in your project | That is the audit journal (every M2 exchange, one JSONL file per server run). Add it to `.gitignore`, relocate with `MACAULAY2_MCP_JOURNAL=<dir>`, or disable with `MACAULAY2_MCP_JOURNAL=off`. |
 | `BLOCKED: ... gatekeeper refuses '...'` | The assistant tried an M2 function that touches the OS (process/file/network). Nothing ran. If you trust the code, set `MACAULAY2_MCP_OS_ALLOW=<symbol>,<symbol>` in the server's environment and restart the client. |
+| Server won't start in a GUI app (LM Studio, Claude Desktop) | GUI apps get a minimal PATH — use the **absolute** path to `uvx` (`which uvx` in a terminal) in the `command` field. For LM Studio you can watch the server's log in the Program tab's server detail view. |
 
 ## Roadmap
 

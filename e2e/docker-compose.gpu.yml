@@ -1,0 +1,11 @@
+# Override: give the Ollama container NVIDIA GPU passthrough (Linux hosts
+# with the nvidia container runtime). run_e2e.sh applies this automatically
+# when it detects nvidia-smi; manually:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d ollama
+#
+# Why not on macOS: Docker containers on Mac run inside a Linux VM without
+# Metal passthrough — GPU-accelerated Ollama on Apple Silicon means running
+# Ollama NATIVELY (see run_e2e.sh's "native" mode).
+services:
+  ollama:
+    gpus: all

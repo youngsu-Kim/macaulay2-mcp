@@ -1,29 +1,41 @@
 name: Release
 
-# Publishes to PyPI when a version tag (vX.Y.Z) is pushed.
-# Requires the repository secret PYPI_API_TOKEN.
+# Publishes to PyPI when a version tag (vX.Y.Z) is pushed, using PyPI
+# TRUSTED PUBLISHING (OpenID Connect) — no API token stored anywhere.
+# One-time setup: see PUBLISHING.md.
 on:
   push:
     tags:
       - "v*"
 
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
     steps:
       - uses: actions/checkout@v4
 
       - name: Install uv
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
-      - name: Build distributions
+      - name: Build sdist + wheel
         run: |
           export PATH="$HOME/.local/bin:$PATH"
           uv build
 
-      - name: Publish to PyPI
-        run: |
-          export PATH="$HOME/.local/bin:$PATH"
-          uv publish --token "${{ secrets.PYPI_API_TOKEN }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi   # PyPI trusted publisher is bound to this environment
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI (trusted publishing, OIDC)
+        uses: pypa/gh-action-pypi-publish@release/v1

@@ -3,12 +3,25 @@
 End-to-end demonstration and regression check: a small **local** LLM
 (Ollama) drives **opencode**, which calls the `macaulay2` MCP server over
 stdio; the server runs a real Macaulay2 1.26 kernel inside the container.
-Everything runs on CPU — targeted at 16 GB RAM machines.
+Everything runs locally; the CPU path is targeted at 16 GB RAM machines.
+
+## GPU modes (auto-detected, force with `E2E_OLLAMA_MODE=…`)
+
+| mode | when chosen | what runs where |
+|---|---|---|
+| `native` | macOS + `ollama` on the host | Ollama runs **natively (Apple Silicon Metal)**; the agent container talks to `http://host.docker.internal:11434`. This is the GPU path on Macs: Docker containers on macOS run in a Linux VM **without Metal passthrough**, so a containerized Ollama can never use the Mac GPU. If host Ollama isn't running, the script stops and tells you (or set `E2E_OLLAMA_MODE=container`). |
+| `gpu` | Linux with `nvidia-smi` | Ollama container with NVIDIA passthrough (`docker-compose.gpu.yml`, `gpus: all`). |
+| `container` | otherwise | Ollama in Docker, CPU-only — works everywhere, slowest. |
+
+```sh
+./run_e2e.sh                                  # auto-detect, prints the chosen mode
+E2E_OLLAMA_MODE=container ./run_e2e.sh        # force CPU container
+E2E_MODEL=qwen3:4b ./run_e2e.sh               # native path uses your host Ollama's models
+```
 
 ## Run it
 
 ```sh
-docker compose up -d ollama          # or just:
 ./run_e2e.sh
 ```
 
