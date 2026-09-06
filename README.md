@@ -4,7 +4,7 @@
 
 The goal for the Macaulay2-MCP project is to leverage large-language-models when working with [Macaulay2](https://macaulay2.com). Especially, it should lower the entry point for newcomers or test a few lines of code. It is still under development and the code needs to be fully reviewed. Use it at your own risk and share your thoughts with me.
 
-The current version is under testing. This early version is published on GitHub to test other components such as PyPI, LM Studio linking, and Binder.
+The current version is **under testing**. This early version is published on GitHub to test other components such as PyPI, LM Studio linking, and Binder.
 
 ## Philosophy
 
@@ -83,8 +83,6 @@ Both commands add a package repository maintained by the Macaulay2 developers (a
 
 `uvx` downloads and runs the server in an isolated environment on first use — there is nothing else to install, and no configuration required.
 
-> **What are `uv` and `uvx`?** [uv](https://docs.astral.sh/uv/) is a fast Python package manager from Astral. `uvx` is its "just run it" mode: it downloads `macaulay2-mcp` from PyPI into a private, throwaway virtual environment and launches it — no install, no activation, no stray dependencies (Python's equivalent of `npx`). Prefer not to use uv? `pipx install macaulay2-mcp` then `pipx runpip`-style invocation, or `pip install --user macaulay2-mcp` and use the bare `macaulay2-mcp` command in every snippet below.
-
 **Check that everything is wired up:**
 
 ```sh
@@ -140,11 +138,11 @@ The server keeps one Macaulay2 kernel alive and sends your code to it, exactly l
 * **Version pin.** v0.1 supports **Macaulay2 1.26.x (latest stable) only**. Other versions produce a clear error with the upgrade command.
 * **Timeout guard.** `m2_evaluate` and `m2_run_script` are guarded by an author-set default of **120 seconds** (raise per call up to 3600) against runaway or infinite computations. A timeout is *not* an M2 error: the message says so, and explains how to retry with a larger `timeout_s` (self-contained code, since the session is restarted).
 * **Stopping on demand.** `m2_interrupt` sends a real software interrupt (SIGINT): M2 aborts the current computation at a safe checkpoint and the running call returns with `error: interrupted` — **all earlier definitions survive**. Only the timeout backstop (for computations that ignore the interrupt) restarts the kernel and loses state.
-* **Parallelism.** The shared session serializes evaluations by design (one kernel = consistent state; safe for concurrent requests from subagents). Genuine concurrency today: every `m2_run_script` spawns its own M2 process and multiple jobs run in parallel — e.g. one subagent per slice of an ideal family. First-class job submission (`m2_submit_job`, status/wait/cancel over a kernel pool) is planned for v0.2.
+* **Parallelism.** The shared session serializes evaluations by design (one kernel = consistent state; safe for concurrent requests from subagents). Genuine concurrency today: every `m2_run_script` spawns its own M2 process and multiple jobs run in parallel — e.g. one subagent per slice of an ideal family. First-class job submission (`m2_submit_job`, status/wait/cancel over a kernel pool) is planned.
 * **Errors inform, they don't decide.** M2 is a REPL: a runtime error does *not* stop the remaining lines from running, and there is no rollback. When that happens, the tool result appends an explicit menu — CONTINUE (fix and resend just the failing statement), RESTART (session reset — irreversible, all definitions lost), or INSPECT (see what survived) — and your assistant is instructed to put those choices to *you*. To prevent the cascade up front, run blocks with `stop_on_error=True`.
 * **Unbalanced input** (e.g. a missing `}`) is rejected up front instead of hanging, and syntax errors that desynchronize the session trigger an automatic restart.
 * **OS-access gate.** M2 functions that run programs, touch the filesystem, reach the network, or kill the kernel (`runProgram`, `lines`, `openOut`, `makeDirectory`, `installPackage`, `quit`, …) are **refused before anything executes** — the session stays untouched and the message explains how the user can enable a specific symbol (`MACAULAY2_MCP_OS_ALLOW=lines,openOut` in the server's environment). The gate is friction against accidents, not a sandbox: M2's `value("...")` string-evaluation is not blocked (blocking it breaks legitimate metaprogramming). For real isolation, run the server in a container/VM.
-* **Audit journal.** Every MCP↔M2 exchange is appended to a JSONL file at `./.m2-mcp/session-<UTC>-<pid>.jsonl` in your project: the code, M2's output, timings, refused gate attempts, and the MCP client (LLM host) that connected. Relocate with `MACAULAY2_MCP_JOURNAL=<dir>`, disable with `=off`. Add `.m2-mcp/` to your `.gitignore` (the server never reads it back in v0.1; checkpoint/replay is planned for v0.2).
+* **Audit journal.** Every MCP↔M2 exchange is appended to a JSONL file at `./.m2-mcp/session-<UTC>-<pid>.jsonl` in your project: the code, M2's output, timings, refused gate attempts, and the MCP client (LLM host) that connected. Relocate with `MACAULAY2_MCP_JOURNAL=<dir>`, disable with `=off`. Add `.m2-mcp/` to your `.gitignore` (the server never reads it back in v0.1; checkpoint/replay is planned).
 * **Security.** This remains a local tool: your assistant can run arbitrary M2 computation on your machine. Both Claude Code and opencode ask for your approval per tool call by default — keep it that way.
 
 ## Design principles
@@ -160,8 +158,6 @@ The server keeps one Macaulay2 kernel alive and sends your code to it, exactly l
 |---|---|
 | macOS (Homebrew) | `brew install Macaulay2/tap/macaulay2` (the tap also exposes `M2` as an alias; `brew trust Macaulay2/tap` first on very recent Homebrew) |
 | Ubuntu (official M2 PPA — always latest) | `sudo add-apt-repository ppa:macaulay2/macaulay2 && sudo apt install macaulay2` |
-| Fedora | `sudo dnf install Macaulay2` (or the [M2 repo](https://macaulay2.com/Repositories/Fedora/)) |
-| Debian stable | [M2 website repo](https://macaulay2.com/Repositories/Debian/) (distro version is older; v0.1 needs 1.26) |
 | Anything else | <https://macaulay2.com/Downloads/> |
 
 If M2 lives in a non-standard place, set `M2_BIN=/path/to/M2` in the client's environment for the server. The only other settings are `MACAULAY2_MCP_JOURNAL` (journal location / `off`) and `MACAULAY2_MCP_OS_ALLOW` (comma-separated M2 OS-symbols to unblock); v0.1 intentionally has no others.
@@ -190,9 +186,7 @@ brew install uv                        # provides /opt/homebrew/bin/uvx
 }
 ```
 
-Or one click:
-
-[![Add MCP Server macaulay2 to LM Studio](https://files.lmstudio.ai/deeplink/mcp-install-light.svg)](https://lmstudio.ai/install-mcp?name=macaulay2&config=eyJjb21tYW5kIjoiL29wdC9ob21lYnJldy9iaW4vdXZ4IiwiYXJncyI6WyJtYWNhdWxheTItbWNwIl0sImVudiI6eyJNQUNBVUxBWTJfTUNQX0pPVVJOQUwiOiIvVXNlcnMvWU9VUlVTRVJOQU1FL20yLWpvdXJuYWxzIn19)
+[![Add MCP Server macaulay2 to LM Studio](https://files.lmstudio.ai/deeplink/mcp-install-light.svg)](https://lmstudio.ai/install-mcp?name=macaulay2&config=eyJjb21tYW5kIjoiL29wdC9ob21lYnJldy9iaW4vdXZ4IiwiYXJncyI6WyJtYWNhdWxheTItbWNwIl0sImVudiI6eyJNQUNBVUxBWTJfTUNQX0pPVVJOQUwiOiIvVXNlcnMveW91bmdzdS1LaW0vbTItam91cm5hbHMifX0=)
 
 Why the snippet looks different from the CLI ones (each choice is yours to change):
 
@@ -202,7 +196,7 @@ Why the snippet looks different from the CLI ones (each choice is yours to chang
 
 Then enable the server in the Program tab, pick a **tool-calling-capable** model, and try:
 
-> Use Macaulay2 to compute the Groebner basis of ideal(x^3 - y, x^4 - z) in QQ[x,y,z].
+> Compute a Groebner basis of the ideal $I = (x^3 - y, x^4 - z)$ in $\mathbb{Q}[x,y,z]$ and print its elements.
 
 You should see a `m2_evaluate` tool call in the chat's tool activity, then the basis. Honest caveat measured in our own Docker E2E: small local models vary a lot at tool calling and at transcribing tables — the server's built-in instructions, error menus, and output journal (LM Studio shows up there as the connected client) are designed to help weaker models, not rescue every case. If a computation is refused by the OS gate, the same `MACAULAY2_MCP_OS_ALLOW` env applies here.
 
@@ -210,9 +204,9 @@ You should see a `m2_evaluate` tool call in the chat's tool activity, then the b
 
 ## Try it in your browser (no install)
 
-[![Launch on Binder](https://mybinder.org/badge.svg)](https://mybinder.org/v2/gh/YOUR-USERNAME/m2-mcp-binder/main?urlpath=lab/tree/demo.ipynb)
+[![Launch on Binder](https://mybinder.org/badge.svg)](https://mybinder.org/v2/gh/youngsu-Kim/macaulay2-mcp-binder/main?urlpath=lab/tree/demo.ipynb)
 
-The companion repo [`m2-mcp-binder`](https://github.com/YOUR-USERNAME/m2-mcp-binder) launches a JupyterLab session (first launch ~2–4 min) where a plain Python notebook drives this very server over MCP — a zero-install way to see the tools in action.
+The companion repo [`m2-mcp-binder`](https://github.com/youngsu-Kim/macaulay2-mcp-binder) launches a JupyterLab session (first launch ~2–4 min) where a plain Python notebook drives this very server over MCP — a zero-install way to see the tools in action.
 
 ## Troubleshooting
 
@@ -227,14 +221,16 @@ The companion repo [`m2-mcp-binder`](https://github.com/YOUR-USERNAME/m2-mcp-bin
 | `BLOCKED: ... gatekeeper refuses '...'` | The assistant tried an M2 function that touches the OS (process/file/network). Nothing ran. If you trust the code, set `MACAULAY2_MCP_OS_ALLOW=<symbol>,<symbol>` in the server's environment and restart the client. |
 | Server won't start in a GUI app (LM Studio, Claude Desktop) | GUI apps get a minimal PATH — use the **absolute** path to `uvx` (`which uvx` in a terminal) in the `command` field. For LM Studio you can watch the server's log in the Program tab's server detail view. |
 
-## Roadmap
+## Todos/Plans
 
-* **v0.2** — remote/HTTP mode (Streamable HTTP + API key) so the server can be hosted and connected to **ChatGPT** and **Gemini Enterprise**; deployment recipes (Docker, Cloudflare Tunnel).
-* **v1.0** — after community feedback: multi-user sessions, support for older/newer M2 versions, MCP prompts for common workflows (e.g. “analyze an ideal”), a package availability search, and more.
+* Remote/HTTP mode (Streamable HTTP + API key) so the server can be hosted and connected to services such as ChatGPT web; deployment recipes (Docker, Cloudflare Tunnel).
+* Multi-user sessions, support for older/newer M2 versions, MCP prompts for common workflows (e.g. "analyze an ideal"), a package availability search, and more — after community feedback.
+* Memory track (persist and reuse session state across runs).
+* Dedicated dataset to train an LLM.
 
 ## Feedback
 
-Please file issues and PRs on [GitHub](https://github.com/YOUR-USERNAME/m2_mcp_project). Once the software has stabilized, it is expected to be announced in the [Macaulay2 Zulip](https://macaulay2.zulipchat.com/) first.
+Please file issues and PRs on [GitHub](https://github.com/youngsu-Kim/macaulay2-mcp). Once the software has stabilized, it is expected to be announced in the [Macaulay2 Zulip](https://macaulay2.zulipchat.com/) first.
 
 ## License
 

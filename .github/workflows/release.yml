@@ -2,7 +2,7 @@ name: Release
 
 # Publishes to PyPI when a version tag (vX.Y.Z) is pushed, using PyPI
 # TRUSTED PUBLISHING (OpenID Connect) — no API token stored anywhere.
-# One-time setup: see PUBLISHING.md.
+# One-time setup: https://docs.pypi.org/trusted-publishers/
 on:
   push:
     tags:

@@ -337,7 +337,7 @@ Notes:
 * Footnote: M2 also has an in-kernel `parallelApply`; this project steers
   beginners toward job-level parallelism, and first-class job handles
   (`m2_submit_job` / status / wait / cancel over a kernel pool) are planned
-  for v0.2.
+  for a later version.
 
 ## 12. Error handling: cascades, halts, and choosing the recovery
 

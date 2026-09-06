@@ -45,7 +45,7 @@ uv run macaulay2-mcp         # run the MCP server on stdio
    behaviour (rendering quirks included). If M2 output changes, review the
    dataset deliberately instead of letting it rot.
 4. **Version pin:** v0.1 supports M2 1.26.x only (`config.py`). Do not add
-   version branches; that's a v0.2 item.
+   version branches; that's a later-version item.
 5. **Timeouts are author-set safety limits** (default 120s, max 3600s).
    Timeout messages must keep saying it is NOT an M2 error and that the
    session was restarted (state lost → retry self-contained).
@@ -53,7 +53,7 @@ uv run macaulay2-mcp         # run the MCP server on stdio
    session lock (one shared kernel = consistent state; concurrent requests
    from subagents are safe, just queued), while `m2_run_script` takes no
    lock (each job is an independent M2 process — that IS the parallelism
-   story until v0.2's job pool). Never "optimize away" the serialization.
+   story until the planned job pool). Never "optimize away" the serialization.
    Tests and docs pin outputs, NEVER timings.
 7. **No new user-facing config knobs.** The complete v0.1 set is `M2_BIN`
    (binary location), `MACAULAY2_MCP_JOURNAL` (journal dir / `off`), and

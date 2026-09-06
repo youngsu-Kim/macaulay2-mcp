@@ -5,5 +5,10 @@ __pycache__
 .ruff_cache
 htmlcov
 e2e/results
+notes
+PUBLISHING.md
+battery_run.py
+.m2-mcp
+m2-mcp-binder
 .DS_Store
 *.egg-info

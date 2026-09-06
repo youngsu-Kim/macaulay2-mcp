@@ -3,7 +3,7 @@
 v0.1 is deliberately low-knob: it targets Macaulay2 1.26 (the latest stable
 release) and pins the kernel flags. The only user-facing setting is the
 ``M2_BIN`` environment variable, for installations in unusual locations.
-Supporting other M2 versions is tracked for v0.2.
+Supporting other M2 versions is tracked for a later version.
 """
 
 from __future__ import annotations

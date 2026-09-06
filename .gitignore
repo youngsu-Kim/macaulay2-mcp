@@ -5,7 +5,6 @@ __pycache__/
 *.egg-info/
 .eggs/
 build/
-dist/
 .venv/
 .pytest_cache/
 .ruff_cache/
@@ -34,3 +33,6 @@ notes/
 
 # journal artifacts (local audit trail)
 .m2-mcp/
+
+# private publishing runbook (kept on disk, stripped from history by filter-repo)
+PUBLISHING.md
