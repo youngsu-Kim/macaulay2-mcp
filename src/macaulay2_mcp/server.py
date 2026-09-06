@@ -38,6 +38,11 @@ Macaulay2 1.26 idioms you will need:
   — ':=' scopes I locally per iteration. Trap: "I_k = ..." defines ONE
   symbol named I_k (underscore is a name character, not indexing); use a
   function instead: I = k -> ideal(...), then call it as I 3.
+* State persists, which means old values haunt new rings: to reuse a name
+  that currently holds a value as a plain symbol, reset it first, e.g.
+  "a = symbol a" (the official tutorial does this with x).
+* Documentation: use the m2_help tool — NOT M2's viewHelp (it opens a
+  browser window; blocked by the OS gate).
 * print takes one expression: print (a | b | c) — without parentheses,
   "print a | b" parses as (print a) | b. Concatenate strings with '|'.
 * In m2_run_script (batch mode), only explicit `print` output is shown.

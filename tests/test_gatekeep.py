@@ -4,7 +4,10 @@ import sys
 
 import pytest
 from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+from mcp.client.stdio import get_default_environment, stdio_client
+
+# stdio spawns get only a curated env — pass JOURNAL=off explicitly (finding F12)
+SERVER_ENV = {**get_default_environment(), "MACAULAY2_MCP_JOURNAL": "off"}
 
 from macaulay2_mcp.config import M2NotFoundError, UnsupportedM2Version, load_config
 from macaulay2_mcp.gatekeep import (
@@ -81,7 +84,7 @@ def test_list_covers_verified_surface():
 
 
 async def _with_server(fn):
-    params = StdioServerParameters(command=sys.executable, args=["-m", "macaulay2_mcp"])
+    params = StdioServerParameters(command=sys.executable, args=["-m", "macaulay2_mcp"], env=SERVER_ENV)
     async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
         await session.initialize()
         return await fn(session)

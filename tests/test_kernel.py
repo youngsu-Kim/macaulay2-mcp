@@ -249,9 +249,15 @@ def test_split_ignores_brackets_in_strings_and_comments():
     assert split_logical_inputs(code) == ['s = "a{b"', 'print ") not a closer"', "c = 3"]
 
 
-def test_split_known_limitation_trailing_operator():
-    # Documented tradeoff: M2 would continue this line; our splitter cuts it.
-    assert split_logical_inputs("y = 2 +\n3\n") == ["y = 2 +", "3"]
+def test_split_keeps_dangling_operator_lines_together():
+    # lines ending in operators/keywords cannot complete an input in M2,
+    # even with balanced brackets (official tutorial's Collatz example)
+    assert split_logical_inputs("y = 2 +\n3\n") == ["y = 2 +\n3"]
+    collatz = "Collatz = n ->\n    while n != 1 list if n%2 == 0 then n=n//2 else n=3*n+1"
+    assert split_logical_inputs(collatz) == [collatz]
+    # but a normal keyword INSIDE a line must not glue:
+    assert split_logical_inputs("a = 1\nb = 2") == ["a = 1", "b = 2"]
+    assert split_logical_inputs("doIt = true\nx = 5") == ["doIt = true", "x = 5"]
 
 
 def test_contains_m2_error_signature():
@@ -267,11 +273,23 @@ def test_contains_m2_error_signature():
 
 
 async def test_trailing_comment_does_not_swallow_marker(session):
-    # Regression: a dangling last line absorbs the marker's iN:-anchored
-    # echo; the handshake must still complete via the unique marker text.
+    """Regression: a dangling last line absorbs the marker into a continuation
+    echo; matching on the unique marker text must still terminate the read."""
     result = await session.evaluate("1+1\n-- trailing note\n", timeout_s=20)
     assert not result.timed_out
     assert "2" in result.output
+
+
+async def test_oo_history_survives_calls(session):
+    """The void-scan marker must not pollute M2's oo/ooo output history —
+    the official tutorial teaches `4*5;` then `oo` -> 20."""
+    await session.evaluate("4*5;")
+    result = await session.evaluate("oo")
+    assert "20" in result.output
+    # and across a normal (printed) statement too
+    await session.evaluate("9*9")
+    result = await session.evaluate("oo")
+    assert "81" in result.output
 
 
 async def test_continue_mode_runs_past_errors(session):

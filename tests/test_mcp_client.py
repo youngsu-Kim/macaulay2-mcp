@@ -5,7 +5,10 @@ import sys
 
 import pytest
 from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+from mcp.client.stdio import get_default_environment, stdio_client
+
+# stdio spawns get only a curated env — pass JOURNAL=off explicitly (finding F12)
+SERVER_ENV = {**get_default_environment(), "MACAULAY2_MCP_JOURNAL": "off"}
 
 from macaulay2_mcp.config import M2NotFoundError, UnsupportedM2Version, load_config
 
@@ -33,7 +36,7 @@ pytestmark = pytest.mark.skipif(not _m2_available(), reason="needs M2 1.26")
 
 
 async def _with_server(fn):
-    params = StdioServerParameters(command=sys.executable, args=["-m", "macaulay2_mcp"])
+    params = StdioServerParameters(command=sys.executable, args=["-m", "macaulay2_mcp"], env=SERVER_ENV)
     async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
         await session.initialize()
         return await fn(session)
@@ -111,7 +114,7 @@ async def test_interrupt_running_computation_via_mcp():
     (the session lock is held) while m2_interrupt runs on a second request
     and must NOT deadlock — proving the lock-free interrupt path.
     """
-    params = StdioServerParameters(command=sys.executable, args=["-m", "macaulay2_mcp"])
+    params = StdioServerParameters(command=sys.executable, args=["-m", "macaulay2_mcp"], env=SERVER_ENV)
     async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
         await session.initialize()
         setup = await session.call_tool("m2_evaluate", {"code": "keepMe = 99"})
@@ -144,7 +147,7 @@ async def test_concurrent_evaluates_are_serialized_safely():
         ("222 + 333", "555"),
         ("6 * 7", "42"),
     ]
-    params = StdioServerParameters(command=sys.executable, args=["-m", "macaulay2_mcp"])
+    params = StdioServerParameters(command=sys.executable, args=["-m", "macaulay2_mcp"], env=SERVER_ENV)
     async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
         await session.initialize()
         results = await asyncio.gather(
@@ -173,7 +176,7 @@ async def test_concurrent_run_scripts(tmp_path):
         )
         scripts.append(str(f))
         values.append(f"gbGens={k + 3}")
-    params = StdioServerParameters(command=sys.executable, args=["-m", "macaulay2_mcp"])
+    params = StdioServerParameters(command=sys.executable, args=["-m", "macaulay2_mcp"], env=SERVER_ENV)
     async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
         await session.initialize()
         results = await asyncio.gather(

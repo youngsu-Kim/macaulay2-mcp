@@ -16,13 +16,16 @@ Protocol (verified against M2 1.26.06 over piped stdin/stdout):
 * Blank or comment-only lines do not terminate a logical input: the next
   line read is absorbed as a continuation. A marker must therefore be a
   complete statement.
-* Completion of an evaluation is detected with a two-step random marker:
-  ``m2MCP<12hex> = 1`` appended after the code. Step 1: a line ending with
-  ``m2MCP<...> = 1`` arrives strictly after all output of the code — usually
-  its own echo ``iM : m2MCP<...> = 1``, but indented if the code ended with
-  a dangling line (e.g. a trailing comment) that absorbed the marker.
-  Step 2: the marker input's deterministic result ``oM = 1`` (M being the
-  last-seen input index) is consumed and discarded.
+* Completion of an evaluation is detected with a random void marker:
+  ``scan({}, i -> m2MCP<12hex>)`` appended after the code. A line ending
+  with ``m2MCP<...>)`` arrives strictly after all output of the code —
+  usually its own echo ``iM : scan({}, i -> m2MCP<...>)``, but indented if
+  the code ended with a dangling line (e.g. a trailing comment) that
+  absorbed the marker. The statement is COMPLETE (cannot dangle), produces
+  NO ``oN =`` output line, and — unlike an assignment — does not pollute
+  M2's ``oo``/``ooo`` output history, so tutorial-style workflows keep
+  working. A void scan's *input* still consumes an ``iN`` label; that is
+  harmless because matching is on the unique marker text.
 * Multi-line input (e.g. an unbalanced ``{ ... }``) is read as one logical
   input. Code with a syntax error that leaves the input unbalanced swallows
   the marker line; the resulting "syntax error" on stderr is detected and
@@ -70,6 +73,17 @@ class KernelCrashed(Exception):
 # would otherwise pollute the next evaluation's block.
 _BARE_PROMPT_RE = re.compile(r"^i\d+ :[ \t]*\r?$")
 
+# A line whose masked text ENDS in something that cannot complete a logical
+# input: a dangling binary/lambda operator or a continuation keyword. M2 keeps
+# reading the next line in these cases even when brackets are balanced
+# (e.g. the official Collatz example ``Collatz = n ->`` + body on the next
+# line), so the splitter must not break there.
+_DANGLING_RE = re.compile(
+    r"(?:->|=>|\+\+|\*\*|//|\+|\*|-|/|\^|=|%|\||&|<|>|\?|@"
+    r"|\b(?:if|then|else|do|where|while|for|list|sum|product|apply|scan|of"
+    r"|suchThat|case|method|try)\b)[ \t]*$"
+)
+
 
 def ends_unbalanced(code: str) -> bool:
     """Return True if ``code`` ends with unbalanced ( [ { or an unterminated
@@ -108,10 +122,12 @@ def split_logical_inputs(code: str) -> list[str]:
     next line), so they attach to the following statement instead — matching
     M2's own grouping.
 
-    Known limitation (documented in the server's instructions): a line ending
-    in a dangling binary operator (``y = 2 +``) is balanced by this scanner
-    but incomplete for M2's parser; keep every line self-contained when using
-    stop_on_error. Trailing blank/comment lines (uncompletable) are dropped.
+    Known limitation (documented in the server's instructions): M2's parser
+    has more continuation cases than this scanner models (e.g. a line ending
+    mid-modifier like ``f_``); keep lines self-contained when using
+    stop_on_error — the scanner errs toward NOT splitting (a glued chunk is
+    recoverable, a wrongly split one changes semantics). Trailing
+    blank/comment lines (uncompletable) are dropped.
     """
     masked = mask(code).text
     chunks: list[str] = []
@@ -138,7 +154,8 @@ def split_logical_inputs(code: str) -> list[str]:
             i += 1
         i += 1  # consume the newline
         current.append(code[line_start : i - 1])
-        if line_has_content and depth == 0 and not in_str:
+        completes = not _DANGLING_RE.search(masked[line_start : i - 1])
+        if line_has_content and depth == 0 and not in_str and completes:
             chunks.append("\n".join(current))
             current = []
             line_has_content = False
@@ -265,7 +282,9 @@ class M2Session:
         # and waiting for both its echo and its deterministic result.
         marker = self._new_marker()
         try:
-            await self._marker_handshake(marker, STARTUP_TIMEOUT_S, write=(marker + " = 1\n").encode())
+            await self._marker_handshake(
+                marker, STARTUP_TIMEOUT_S, write=(self._marker_stmt(marker) + "\n").encode()
+            )
         except (asyncio.TimeoutError, KernelCrashed) as exc:
             await self._kill()
             raise M2StartupError(
@@ -294,6 +313,13 @@ class M2Session:
         # A valid M2 variable name (letters/digits), unique per call.
         return "m2MCP" + uuid.uuid4().hex[:12]
 
+    @staticmethod
+    def _marker_stmt(marker: str) -> str:
+        # A COMPLETE statement that produces no oN= result and does NOT touch
+        # M2's oo/ooo output history (verified on 1.26.06): scanning the empty
+        # list is balanced (can't dangle) and evaluates to void.
+        return f"scan({{}}, i -> {marker})"
+
     # ------------------------------------------------------------- I/O loop
 
     async def _read_line(self, deadline: float) -> str:
@@ -310,22 +336,15 @@ class M2Session:
     async def _marker_handshake(
         self, marker: str, timeout_s: float, *, write: bytes
     ) -> str:
-        """Write ``write`` (which must end with the marker statement) and
-        complete the two-step marker handshake.
+        """Write ``write`` (which must end with the marker statement) and read
+        until the marker line.
 
-        Step 1: read until a line whose text ends with ``<marker> = 1`` —
-        this arrives strictly after all output of the preceding code. The
-        marker normally appears as its own echo (``iN : <marker> = 1``), but
-        when the code ends with a dangling line (e.g. a trailing comment)
-        the marker is absorbed as a continuation line and echoed indented
-        instead; matching on the unique marker text handles both. The input
-        index is tracked from any ``iN :`` line so step 2 can wait for the
-        right result line.
-        Step 2: consume the marker's deterministic result ``oN = 1``.
-
-        Returns everything printed before the marker line (input echoes
-        included; marker line excluded). Raises asyncio.TimeoutError or
-        KernelCrashed.
+        The marker ``scan({}, i -> m2MCP<hex>)`` echoes (``iN : scan(...)``,
+        or indented if a dangling last line absorbed it) and prints no result
+        line, so the marker echo is the single boundary: everything printed
+        before it is the answer to the preceding code. Matching is on the
+        unique marker TEXT (not the ``iN :`` prefix) so absorbed echoes still
+        terminate the read. Raises asyncio.TimeoutError or KernelCrashed.
         """
         assert self._proc is not None and self._proc.stdin is not None
         self._proc.stdin.write(write)
@@ -333,32 +352,21 @@ class M2Session:
 
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout_s
-        marker_re = re.compile(rf"\b{re.escape(marker)} = 1[ \t]*\r?$")
+        # ends with "<marker>)" (absorbed or own echo line); marker text is unique
+        marker_re = re.compile(rf"\b{re.escape(marker)}\)[ \t]*\r?$")
         index_re = re.compile(r"^i(\d+) :")
-        result_re = re.compile(r"^o(\d+) = 1[ \t]*\r?$")
         lines: list[str] = []
-        last_index = self._prompt_index
-        marker_index: int | None = None
         while True:
             text = await self._read_line(deadline)
-            if marker_index is None:
-                m = index_re.match(text)
-                if m:
-                    last_index = int(m.group(1))
-                if marker_re.search(text):
-                    marker_index = last_index
-                    self._prompt_index = max(self._prompt_index, marker_index)
-                    continue
-                if _BARE_PROMPT_RE.match(text):
-                    # artifact of a SIGINT received while M2 waited for input
-                    continue
-                lines.append(text)
-            else:
-                m = result_re.match(text)
-                if m and int(m.group(1)) == marker_index:
-                    return "".join(lines)
-                # Other lines between the marker and its result belong to
-                # no one (blank lines); drop them.
+            m = index_re.match(text)
+            if m:
+                self._prompt_index = max(self._prompt_index, int(m.group(1)))
+            if marker_re.search(text):
+                return "".join(lines)
+            if _BARE_PROMPT_RE.match(text):
+                # artifact of a SIGINT received while M2 waited for input
+                continue
+            lines.append(text)
 
     async def _send_and_wait(self, code: str, marker: str, timeout_s: float) -> str:
         """Send ``code`` followed by the marker statement.
@@ -366,7 +374,7 @@ class M2Session:
         Returns the block printed before the marker's echo. Raises
         asyncio.TimeoutError or KernelCrashed.
         """
-        payload = (code + "\n" + marker + " = 1\n").encode("utf-8")
+        payload = (code + "\n" + self._marker_stmt(marker) + "\n").encode("utf-8")
         return await self._marker_handshake(marker, timeout_s, write=payload)
 
     # ------------------------------------------------------------- evaluate

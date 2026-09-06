@@ -63,6 +63,8 @@ OS_SYMBOLS: frozenset[str] = frozenset(
         "getEnvironment",
         "currentDirectory",
         "quit",
+        # viewer launch (opens a browser; confirmed present in 1.26.06)
+        "viewHelp",
     }
 )
 
@@ -91,10 +93,11 @@ _CATEGORIES = {
     "deleteDirectory": "file mutation",
     "installPackage": "package install (disk write)",
     "exportVars": "package export (disk write)",
-    "getEnvironment": "environment disclosure",
-    "currentDirectory": "environment disclosure",
-    "quit": "session destruction",
-}
+        "getEnvironment": "environment disclosure",
+        "currentDirectory": "environment disclosure",
+        "quit": "session destruction",
+        "viewHelp": "viewer/browser launch",
+    }
 
 
 def allowed_symbols() -> frozenset[str]:

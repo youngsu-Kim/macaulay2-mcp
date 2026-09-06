@@ -27,15 +27,18 @@ uv run macaulay2-mcp         # run the MCP server on stdio
    next input. M2's errors go to its **stderr**, which we merge into stdout
    at the OS level (`stderr=STDOUT`) so error text keeps true stream order
    in the returned output — do NOT separate them again (async drains race).
-   Completion of an evaluation is detected by the two-step random marker in
-   `kernel.py` (`m2MCP<12hex> = 1`: wait for the echo `iN : <marker> = 1`,
-   then consume the deterministic result `oN = 1`). Blank or comment-only
-   lines do NOT terminate a logical M2 input (they dangle and absorb the
-   next line). Keep the marker a *complete statement* — never a comment.
-   SIGINT (m2_interrupt) works in pipe mode: M2 prints `error: interrupted`,
-   prompt indices stay in sync, the buffered marker still executes (the
-   in-flight evaluate() returns normally), and state survives. SIGINT while
-   idle only emits a bare `iN :` line — filtered from evaluation blocks.
+   Completion of an evaluation is detected by the void marker in `kernel.py`
+   (`scan({}, i -> m2MCP<12hex>)`: read until a line ending with the unique
+   marker text). The marker must be a COMPLETE statement (blank/comment
+   lines dangle and absorb the next line) AND produce no `oN` output —
+   an assignment marker polluted M2's `oo`/`ooo` history, breaking the
+   official tutorial's `4*5; oo` workflow (regression test:
+   `test_oo_history_survives_calls`). Blank or comment-only lines do NOT
+   terminate a logical M2 input. SIGINT (m2_interrupt) works in pipe mode:
+   M2 prints `error: interrupted`, prompt indices stay in sync, the
+   buffered marker still executes (the in-flight evaluate() returns
+   normally), and state survives. SIGINT while idle only emits a bare
+   `iN :` line — filtered from evaluation blocks.
    `M2Session.interrupt()` is LOCK-FREE by design (evaluate() holds the
    session lock while running); never make it take the lock.
 3. **Golden outputs:** `tests/data/golden.jsonl` pins observable M2 1.26
