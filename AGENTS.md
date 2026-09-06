@@ -52,8 +52,10 @@ uv run macaulay2-mcp         # run the MCP server on stdio
    lock (each job is an independent M2 process — that IS the parallelism
    story until v0.2's job pool). Never "optimize away" the serialization.
    Tests and docs pin outputs, NEVER timings.
-7. **No new user-facing config knobs** in v0.1 beyond `M2_BIN`. Pinned flags
-   live in `config.py` (`M2_KERNEL_FLAGS`).
+7. **No new user-facing config knobs.** The complete v0.1 set is `M2_BIN`
+   (binary location), `MACAULAY2_MCP_JOURNAL` (journal dir / `off`), and
+   `MACAULAY2_MCP_OS_ALLOW` (gate unblock list). Pinned flags and limits
+   live in `config.py` (`M2_KERNEL_FLAGS`, timeouts).
 8. **Messages inform, never direct.** Every user-facing string (install
    hints, errors, tool outputs, README) states what the suggested action
    does and whether it is reversible — and how to undo it. We do not tell
@@ -73,19 +75,36 @@ uv run macaulay2-mcp         # run the MCP server on stdio
    do NOT re-anchor to `^iN : <marker>`: a code block ending in a comment
    absorbs the marker as a continuation line and the handshake would hang
    to timeout (regression test: `test_trailing_comment_does_not_swallow_marker`).
+10. **Gate + journal contracts.** The OS-call gatekeeper (`gatekeep.py`)
+    refuses process/file/network/env/session symbols BEFORE sending anything,
+    at all four entry points (evaluate, run_script, import_file,
+    load_package path check); it matches on `scanner.mask()` output —
+    strings/comments never false-positive; `value()` is deliberately NOT
+    blocked (documented bypass; friction not sandbox). The journal
+    (`journal.py`) defaults ON at `./.m2-mcp/`, writes lazily so the header
+    carries clientInfo (via `ctx.request_context.session.client_params` —
+    SDK v2 stdio path), truncates fields at 1 MiB, and MUST NEVER raise into
+    a tool call (self-disables with one stderr warning) and never touches
+    stdout. Tool handlers take a hidden `ctx: Context = None` param — the SDK
+    excludes it from the JSON schema; keep that pattern.
 
 ## Layout
 
 ```
 src/macaulay2_mcp/
-  config.py   binary discovery, version gate, pinned flags/timeouts
-  kernel.py   M2Session (persistent kernel), M2ScriptRunner (batch), messages
-  server.py   the 8 MCP tools + INSTRUCTIONS (LLM-facing, keep accurate)
-  cli.py      entry point: server mode | selftest | --version
+  config.py    binary discovery, version gate, pinned flags/timeouts
+  scanner.py   offset-preserving string/comment mask (shared by kernel+gate)
+  kernel.py    M2Session (persistent kernel), M2ScriptRunner (batch), messages
+  gatekeep.py  OS-call blocklist + rejection messages (mask-based matching)
+  journal.py   JSONL audit journal (lazy header w/ clientInfo, never raises)
+  server.py    the 8 MCP tools + INSTRUCTIONS (LLM-facing, keep accurate)
+  cli.py       entry point: server mode | selftest | --version
 tests/
-  test_kernel.py    protocol tests (skip if M2 1.26 missing)
+  test_kernel.py     protocol tests (skip if M2 1.26 missing)
+  test_gatekeep.py   masking / enforcement / live blocking
+  test_journal.py    journal units + live clientInfo-in-header round trip
   test_mcp_client.py client-level tests over stdio
-e2e/                Docker + Ollama + opencode demo (opt-in: run_e2e.sh)
+e2e/                 Docker + Ollama + opencode demo (opt-in: run_e2e.sh)
 ```
 
 ## M2 1.26 idioms relevant to this codebase

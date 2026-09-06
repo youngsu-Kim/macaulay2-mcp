@@ -56,6 +56,7 @@ from .config import (
     clamp_timeout,
     load_config,
 )
+from .scanner import mask
 
 logger = logging.getLogger("macaulay2_mcp.kernel")
 
@@ -77,34 +78,14 @@ def ends_unbalanced(code: str) -> bool:
     M2 in pipe mode would wait forever for continuation lines in that case
     (swallowing the marker we append), so we reject such input up front.
     """
-    stack: list[str] = []
-    pairs = {")": "(", "]": "[", "}": "{"}
-    in_str = False
-    i, n = 0, len(code)
-    while i < n:
-        c = code[i]
-        if in_str:
-            if c == "\\":
-                i += 2
-                continue
-            if c == '"':
-                in_str = False
-            i += 1
-            continue
-        if c == '"':
-            in_str = True
-            i += 1
-            continue
-        if c == "-" and i + 1 < n and code[i + 1] == "-":
-            while i < n and code[i] != "\n":
-                i += 1
-            continue
+    masked = mask(code)
+    depth = 0
+    for c in masked.text:
         if c in "([{":
-            stack.append(c)
-        elif c in pairs and (not stack or stack.pop() != pairs[c]):
-            return False  # extra closer: M2 will report the error itself
-        i += 1
-    return bool(stack) or in_str
+            depth += 1
+        elif c in ")]}" and depth > 0:
+            depth -= 1
+    return depth > 0 or masked.ends_in_string
 
 
 # M2 error reports begin with a location like ``stdio:3:8:(3):[1]: error:``
@@ -132,53 +113,38 @@ def split_logical_inputs(code: str) -> list[str]:
     but incomplete for M2's parser; keep every line self-contained when using
     stop_on_error. Trailing blank/comment lines (uncompletable) are dropped.
     """
+    masked = mask(code).text
     chunks: list[str] = []
     current: list[str] = []
-    stack: list[str] = []
-    pairs = {")": "(", "]": "[", "}": "{"}
+    depth = 0
     in_str = False
     line_has_content = False
     i, n = 0, len(code)
     while i < n:
         line_start = i
         while i < n and code[i] != "\n":
-            c = code[i]
-            if in_str:
-                if c == "\\":
-                    i += 2
-                    continue
-                if c == '"':
-                    in_str = False
-                else:
-                    line_has_content = True
-                i += 1
-                continue
+            c = masked[i]
             if c == '"':
-                in_str = True
+                in_str = not in_str
                 line_has_content = True
-                i += 1
-                continue
-            if c == "-" and i + 1 < n and code[i + 1] == "-":
-                nl = code.find("\n", i)
-                i = n if nl == -1 else nl
-                continue
-            if c in "([{" or c in pairs or not c.isspace():
+            elif c in "([{":
+                depth += 1
                 line_has_content = True
-            if c in "([{":
-                stack.append(c)
-            elif c in pairs and stack:
-                stack.pop()
+            elif c in ")]}":
+                depth = max(0, depth - 1)
+                line_has_content = True
+            elif not c.isspace():
+                line_has_content = True
             i += 1
         i += 1  # consume the newline
         current.append(code[line_start : i - 1])
-        if line_has_content and not stack and not in_str:
+        if line_has_content and depth == 0 and not in_str:
             chunks.append("\n".join(current))
             current = []
             line_has_content = False
-    # Leftover (no flush): only blank/comment lines can remain, since any
-    # content line at depth 0 flushes and unbalanced code is rejected by the
-    # ends_unbalanced guard before splitting. A dangling trailing comment
-    # would never complete an input, so it is dropped.
+    # Anything left unflushed is a run of blank/comment lines (content at
+    # depth 0 flushes, and unbalanced code is rejected before splitting by
+    # ends_unbalanced). It would dangle in M2, so it is dropped.
     return chunks
 
 

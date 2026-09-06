@@ -31,3 +31,6 @@ e2e/results/
 
 # Private contributor/review notes (not part of the published repo)
 notes/
+
+# journal artifacts (local audit trail)
+.m2-mcp/

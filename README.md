@@ -169,10 +169,24 @@ output, so your assistant can read and react to them.
 * **Unbalanced input** (e.g. a missing `}`) is rejected up front instead of
   hanging, and syntax errors that desynchronize the session trigger an
   automatic restart.
-* **Security.** This is a local tool: your assistant can run arbitrary M2
-  code on your machine (M2 code can in turn touch files and run system
-  commands). Both Claude Code and opencode ask for your approval per tool
-  call by default — keep it that way.
+* **OS-access gate.** M2 functions that run programs, touch the filesystem,
+  reach the network, or kill the kernel (`runProgram`, `lines`, `openOut`,
+  `makeDirectory`, `installPackage`, `quit`, …) are **refused before anything
+  executes** — the session stays untouched and the message explains how the
+  user can enable a specific symbol (`MACAULAY2_MCP_OS_ALLOW=lines,openOut`
+  in the server's environment). The gate is friction against accidents, not
+  a sandbox: M2's `value("...")` string-evaluation is not blocked (blocking
+  it breaks legitimate metaprogramming). For real isolation, run the server
+  in a container/VM.
+* **Audit journal.** Every MCP↔M2 exchange is appended to a JSONL file at
+  `./.m2-mcp/session-<UTC>-<pid>.jsonl` in your project: the code, M2's
+  output, timings, refused gate attempts, and the MCP client (LLM host)
+  that connected. Relocate with `MACAULAY2_MCP_JOURNAL=<dir>`, disable with
+  `=off`. Add `.m2-mcp/` to your `.gitignore` (the server never reads it
+  back in v0.1; checkpoint/replay is planned for v0.2).
+* **Security.** This remains a local tool: your assistant can run arbitrary
+  M2 computation on your machine. Both Claude Code and opencode ask for your
+  approval per tool call by default — keep it that way.
 
 ## Design principles
 
@@ -198,7 +212,10 @@ output, so your assistant can read and react to them.
 | Anything else | <https://macaulay2.com/Downloads/> |
 
 If M2 lives in a non-standard place, set `M2_BIN=/path/to/M2` in the client's
-environment for the server.
+environment for the server. The only other settings are
+`MACAULAY2_MCP_JOURNAL` (journal location / `off`) and
+`MACAULAY2_MCP_OS_ALLOW` (comma-separated M2 OS-symbols to unblock); v0.1
+intentionally has no others.
 
 ## Try it in your browser (no install)
 
@@ -218,6 +235,8 @@ tools in action.
 | Server doesn't appear in the client | Restart the client; run `uvx macaulay2-mcp selftest` manually to see errors; check `claude mcp list` (Claude Code) or `opencode mcp list` (opencode). |
 | A computation times out | Retry with a larger `timeout_s` (ask your assistant to), or write a script and use `m2_run_script`. To cancel a running computation while keeping session state, have the assistant call `m2_interrupt`. |
 | Something about an unbalanced `}` | Your (or the assistant's) code was missing a closing bracket — the error message says so; just fix and resend. |
+| A `.m2-mcp/` folder appeared in your project | That is the audit journal (every M2 exchange, one JSONL file per server run). Add it to `.gitignore`, relocate with `MACAULAY2_MCP_JOURNAL=<dir>`, or disable with `MACAULAY2_MCP_JOURNAL=off`. |
+| `BLOCKED: ... gatekeeper refuses '...'` | The assistant tried an M2 function that touches the OS (process/file/network). Nothing ran. If you trust the code, set `MACAULAY2_MCP_OS_ALLOW=<symbol>,<symbol>` in the server's environment and restart the client. |
 
 ## Roadmap
 

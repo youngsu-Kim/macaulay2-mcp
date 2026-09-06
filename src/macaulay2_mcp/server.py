@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 from pathlib import Path
 
 from mcp.server import MCPServer
+from mcp.server.mcpserver.context import Context
 
 from . import __version__
 from .config import DEFAULT_TIMEOUT_S
+from .gatekeep import check_package_name, find_blocked_calls, rejection_message
+from .journal import Journal
 from .kernel import M2ScriptRunner, M2Session
 
 logger = logging.getLogger("macaulay2_mcp.server")
@@ -64,6 +68,15 @@ a line after a binary operator) and everything after the first error is not
 executed. Note the asymmetry: m2_run_script runs in M2's batch mode with
 --stop, so a script halts at its first error by design.
 
+OS-access gate: before anything runs, this server REFUSES code that mentions
+M2's operating-system functions (runProgram, findProgram, lines, openIn,
+openOut, makeDirectory, installPackage, quit, and similar process/file/
+network/env symbols). Nothing is executed and the session is untouched when
+this happens. Relay the BLOCKED message to the user; if they want such a
+call, THEY can enable specific symbols via the MACAULAY2_MCP_OS_ALLOW
+environment variable. Do not attempt to route around the gate (e.g. via
+value("...")) — flag it to the user instead and let them decide.
+
 Parallelism: the shared session serializes concurrent m2_evaluate calls by
 design (one kernel, cooperating state). For independent heavy work — e.g.
 computing invariants for a whole family I_k — prefer self-contained
@@ -103,6 +116,43 @@ This is irreversible: ALL current session definitions are lost.
   (3) INSPECT — evaluate the affected names first to see what survived."""
 
 
+def _gate_file(path: str) -> str | None:
+    """Read a .m2 file and return a rejection message if it uses OS symbols.
+
+    Returns None (proceed) when the file is unreadable or not text — the
+    downstream runner/importer produce the appropriate error in that case.
+    """
+    try:
+        content = Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    blocked = find_blocked_calls(content)
+    if blocked:
+        return "\n".join(rejection_message(sym) for sym in blocked)
+    return None
+
+
+def _client_info(ctx: Context | None) -> dict | None:
+    """Best-effort extraction of the connected client's identity (clientInfo
+    from the MCP initialize handshake) for the journal header."""
+    if ctx is None:
+        return None
+    try:
+        rc = ctx.request_context
+        params = rc.session.client_params
+        if params is None or params.client_info is None:
+            return None
+        ci = params.client_info
+        return {
+            "name": ci.name,
+            "title": getattr(ci, "title", None),
+            "version": ci.version,
+            "protocol_version": rc.protocol_version,
+        }
+    except Exception:  # noqa: BLE001 - never let introspection break a tool call
+        return None
+
+
 def build_server() -> MCPServer:
     server = MCPServer(
         name="macaulay2",
@@ -118,10 +168,19 @@ def build_server() -> MCPServer:
 
     session = M2Session()
     runner = M2ScriptRunner()
+    journal = Journal.from_env(__version__)
+    if journal.enabled and journal.path is not None:
+        logger.info("journal: %s", journal.path)
+        # NOTE: no record() here — the header line is written lazily on the
+        # first tool call so it can carry clientInfo from the initialize
+        # handshake (set_client_info runs before every record).
 
     @server.tool()
     async def m2_evaluate(
-        code: str, timeout_s: int = DEFAULT_TIMEOUT_S, stop_on_error: bool = False
+        code: str,
+        timeout_s: int = DEFAULT_TIMEOUT_S,
+        stop_on_error: bool = False,
+        ctx: Context = None,
     ) -> str:
         """Evaluate Macaulay2 code in the persistent session and return its output.
 
@@ -143,6 +202,12 @@ def build_server() -> MCPServer:
                 unexecuted. Requires each line to be a self-contained
                 statement (do not break a line after a binary operator).
         """
+        blocked = find_blocked_calls(code)
+        if blocked:
+            journal.set_client_info(_client_info(ctx))
+            journal.record("os_block", tool="m2_evaluate", symbols=blocked, code=code)
+            return "\n".join(rejection_message(sym) for sym in blocked)
+        t0 = time.perf_counter()
         result = await session.evaluate(code, timeout_s, stop_on_error=stop_on_error)
         text = result.output
         if result.errored and not result.interrupted and not result.crashed:
@@ -153,10 +218,26 @@ def build_server() -> MCPServer:
             )
         elif result.not_sent and not result.crashed:
             text += f"\n\n(stop_on_error: {result.not_sent} later input(s) were not executed.)"
+        journal.set_client_info(_client_info(ctx))
+        journal.record(
+            "evaluate",
+            code=code,
+            timeout_s=timeout_s,
+            stop_on_error=stop_on_error,
+            elapsed_ms=int((time.perf_counter() - t0) * 1000),
+            timed_out=result.timed_out,
+            crashed=result.crashed,
+            interrupted=result.interrupted,
+            errored=result.errored,
+            stopped=result.stopped,
+            not_sent=result.not_sent,
+            m2=session.describe(),
+            output=text,
+        )
         return text
 
     @server.tool()
-    async def m2_interrupt() -> str:
+    async def m2_interrupt(ctx: Context = None) -> str:
         """Interrupt the Macaulay2 computation currently running in the session.
 
         Use this when the user wants to cancel or stop a long-running
@@ -171,7 +252,10 @@ def build_server() -> MCPServer:
         the running m2_evaluate's own timeout_s remains the backstop: it
         kills and restarts the kernel on expiry.
         """
-        if session.interrupt():
+        sent = session.interrupt()
+        journal.set_client_info(_client_info(ctx))
+        journal.record("interrupt", sent=sent)
+        if sent:
             return (
                 "Interrupt sent (SIGINT). If the computation is interruptible, "
                 "the running m2_evaluate will return shortly with an "
@@ -181,17 +265,20 @@ def build_server() -> MCPServer:
         return "Nothing is running in the Macaulay2 session; nothing to interrupt."
 
     @server.tool()
-    async def m2_session_reset() -> str:
+    async def m2_session_reset(ctx: Context = None) -> str:
         """Restart the Macaulay2 kernel, discarding ALL session state.
 
         Use before starting a fresh line of computation, or whenever the
         session seems corrupted. After a reset, rings and definitions from
         earlier calls no longer exist.
         """
-        return await session.reset()
+        out = await session.reset()
+        journal.set_client_info(_client_info(ctx))
+        journal.record("reset", output=out)
+        return out
 
     @server.tool()
-    async def m2_help(topic: str) -> str:
+    async def m2_help(topic: str, ctx: Context = None) -> str:
         """Look up Macaulay2 documentation for a function, class, or concept.
 
         Args:
@@ -200,10 +287,14 @@ def build_server() -> MCPServer:
         """
         safe = _escape_m2_string(topic.strip())
         result = await session.evaluate(f'help "{safe}"', timeout_s=60)
+        journal.set_client_info(_client_info(ctx))
+        journal.record("help", topic=topic, output=result.output)
         return result.output
 
     @server.tool()
-    async def m2_run_script(path: str, timeout_s: int = DEFAULT_TIMEOUT_S) -> str:
+    async def m2_run_script(
+        path: str, timeout_s: int = DEFAULT_TIMEOUT_S, ctx: Context = None
+    ) -> str:
         """Run a .m2 file in a FRESH, isolated Macaulay2 process.
 
         Does not touch the persistent session (and its state is not visible
@@ -218,24 +309,41 @@ def build_server() -> MCPServer:
                 timeout the process is killed and any partial output is
                 returned.
         """
+        gate = _gate_file(path)
+        journal.set_client_info(_client_info(ctx))
+        if gate is not None:
+            journal.record("os_block", tool="m2_run_script", path=path, detail=gate)
+            return gate
+        t0 = time.perf_counter()
         result = await runner.run(path, timeout_s)
         text = result.output or "(the script produced no output)"
         if result.exit_code not in (0, None):
             text += f"\n\n(exit code {result.exit_code})"
+        journal.record(
+            "run_script",
+            path=path,
+            timeout_s=timeout_s,
+            exit_code=result.exit_code,
+            timed_out=result.timed_out,
+            elapsed_ms=int((time.perf_counter() - t0) * 1000),
+            output=text,
+        )
         return text
 
     @server.tool()
-    async def m2_list_packages() -> str:
+    async def m2_list_packages(ctx: Context = None) -> str:
         """List the Macaulay2 packages currently loaded in the session.
 
         Returns the package names, e.g.
         {Varieties, Complexes, PrimaryDecomposition, Core, ...}.
         """
         result = await session.evaluate("loadedPackages")
+        journal.set_client_info(_client_info(ctx))
+        journal.record("list_packages", output=result.output)
         return result.output
 
     @server.tool()
-    async def m2_load_package(name: str, reload: bool = False) -> str:
+    async def m2_load_package(name: str, reload: bool = False, ctx: Context = None) -> str:
         """Load a Macaulay2 package into the session.
 
         Packages stay loaded until the session is reset (M2 has no unload
@@ -251,21 +359,30 @@ def build_server() -> MCPServer:
                 (package-development workflow; leave False otherwise).
         """
         safe = _escape_m2_string(name.strip())
+        journal.set_client_info(_client_info(ctx))
+        path_err = check_package_name(name)
+        if path_err is not None:
+            journal.record("os_block", tool="m2_load_package", name=name, detail=path_err)
+            return path_err
         if reload:
             result = await session.evaluate(f'loadPackage "{safe}", Reload => true')
+            journal.record("load_package", name=name, reload=True, output=result.output)
             return result.output
         result = await session.evaluate(f'loadPackage "{safe}"')
         if "not reloaded; try Reload => true" in result.output:
             pkg = name.strip()
-            return (
+            out = (
                 f"Package {pkg!r} is already loaded in this session; nothing "
                 f"to do. (Pass reload=true only if you edited the package "
                 f"source and need it re-read from disk.)"
             )
+            journal.record("load_package", name=name, reload=reload, output=out)
+            return out
+        journal.record("load_package", name=name, reload=reload, output=result.output)
         return result.output
 
     @server.tool()
-    async def m2_import_file(path: str) -> str:
+    async def m2_import_file(path: str, ctx: Context = None) -> str:
         """Import a local .m2 file INTO the persistent session.
 
         Reads the file and evaluates its contents in the session, so newly
@@ -288,11 +405,18 @@ def build_server() -> MCPServer:
             return f"ERROR: could not read {path}: {exc}"
         if not content.strip():
             return f"(file {path} is empty; nothing imported)"
+        blocked = find_blocked_calls(content)
+        journal.set_client_info(_client_info(ctx))
+        if blocked:
+            journal.record("os_block", tool="m2_import_file", path=path, symbols=blocked)
+            return "\n".join(rejection_message(sym) for sym in blocked)
         result = await session.evaluate(content)
-        return (
+        out = (
             result.output
             + f"\n\n(imported {len(content.splitlines())} lines from {path})"
         )
+        journal.record("import_file", path=path, lines=len(content.splitlines()), output=out)
+        return out
 
     return server
 
