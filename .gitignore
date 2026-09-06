@@ -1,4 +1,5 @@
 # Python
+dist/
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -24,3 +25,12 @@ uv.lock.bak
 
 # Local (developer) opencode config; the published form lives in the README
 opencode.json
+
+# Generated E2E outputs
+e2e/results/
+
+# Private contributor/review notes (not part of the published repo)
+notes/
+
+# journal artifacts (local audit trail)
+.m2-mcp/

@@ -1,0 +1,29 @@
+name: Release
+
+# Publishes to PyPI when a version tag (vX.Y.Z) is pushed.
+# Requires the repository secret PYPI_API_TOKEN.
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Build distributions
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          uv build
+
+      - name: Publish to PyPI
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          uv publish --token "${{ secrets.PYPI_API_TOKEN }}"

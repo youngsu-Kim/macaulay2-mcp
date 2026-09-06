@@ -1,0 +1,31 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    environment:
+      # Keep the context bounded for CPU-only machines (16 GB RAM target).
+      OLLAMA_CONTEXT_LENGTH: "16384"
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+
+  agent:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile
+    image: macaulay2-mcp-e2e:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OPENCODE_DISABLE_AUTOUPDATE: "true"
+    volumes:
+      - ./results:/workspace/results
+
+volumes:
+  ollama_models:
