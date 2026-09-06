@@ -421,14 +421,6 @@ class M2ScriptRunner:
                 message = f"{partial}\n\n{message}"
             return ScriptResult(output=message, exit_code=proc.returncode, timed_out=True)
         return ScriptResult(
-            output=_strip_trailing_prompt(stdout.decode("utf-8", errors="replace")),
+            output=stdout.decode("utf-8", errors="replace").strip(),
             exit_code=proc.returncode,
         )
-
-
-def _strip_trailing_prompt(text: str) -> str:
-    """M2 prints a bare ``iN :`` prompt when batch-mode stdin hits EOF.
-
-    It is protocol noise for callers of m2_run_script; drop it.
-    """
-    return re.sub(r"\s*i\d+ :[ \t\r\n]*$", "", text).strip()

@@ -143,9 +143,6 @@ async def test_run_script(tmp_path, session):
     result = await runner.run(str(script))
     assert result.timed_out is False
     assert "0" in result.output
-    # batch-mode EOF prints a bare "i1 :" prompt — stripped from the result
-    assert not result.output.rstrip().endswith(":")
-    assert "i1 :" not in result.output
 
 
 async def test_run_script_missing_file(session):
