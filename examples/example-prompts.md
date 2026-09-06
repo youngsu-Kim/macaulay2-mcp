@@ -234,3 +234,107 @@ Crucially, **nothing was lost** — `keepMe = 99` defined before the runaway
 loop still evaluates to `99` in the same session. Contrast with §8: a
 *timeout* kills and restarts the kernel (state gone); an *interrupt* aborts
 only the current statement (state kept).
+
+## 10. A family of ideals indexed by k (loops)
+
+> For the family `I_k = (x^(k+2) - y, x^(k+3) - z)` in `QQ[x,y,z]`, loop over
+> `k = 1..6` and tabulate the reduced Groebner basis sizes and the dimensions
+> of `R/I_k`.
+
+**Style A — collect invariants** (`for ... list` returns a list; `:=` scopes
+`J` locally per iteration):
+
+```
+for k from 1 to 6 list (J := ideal(x^(k+2) - y, x^(k+3) - z); (k, #flatten entries generators gb J, dim (R/J)))
+```
+
+```
+o = {(1, 4, 1), (2, 5, 1), (3, 6, 1), (4, 7, 1), (5, 8, 1), (6, 9, 1)}
+```
+
+(The Groebner basis gains one generator per step; the quotient stays a curve.
+This exact output is pinned in the golden regression dataset.)
+
+**Style B — display per-k tables** (`scan` + explicit `print`):
+
+```
+scan({1, 2}, k -> (J := ideal(x^(k+2) - y, x^(k+3) - z); print k; print betti res J))
+```
+
+```
+1
+       0 1 2 3
+total: 1 4 4 1
+    0: 1 . . .
+    1: . 1 . .
+    2: . 3 4 1
+2
+       0 1 2 3
+total: 1 5 6 2
+    0: 1 . . .
+    1: . 1 . .
+    2: . . . .
+    3: . 4 6 2
+```
+
+**Beginner traps this exercises** (all verified on M2 1.26.06, and encoded in
+the server's instructions so your assistant avoids them):
+
+* `I_k = ...` defines ONE symbol literally named `I_k` — underscore is a name
+  character, not indexing. Make `k` a function parameter:
+  `I = k -> ideal(x^(k+2) - y, x^(k+3) - z)`, then call `I 3` or `I(k)`.
+* Inside a loop body, `J := ...` scopes locally per iteration; a bare `J = ...`
+  would overwrite a global.
+* `dim (R/J)` needs the parentheses: `dim R/J` parses differently.
+* `print a | b` is `(print a) | b` — parenthesize concatenations:
+  `print (a | b)`.
+
+## 11. Parallel batch jobs, fanned out across subagents
+
+> Same family, k = 1..6, but split the work across three subagents, each
+> running its own slice as an isolated `m2_run_script` job.
+
+`m2_evaluate` uses one shared kernel (state cooperation, serialized by
+design). For independent heavy work, each `m2_run_script` call spawns **its
+own M2 process** — so N concurrent jobs = genuine N-way parallelism.
+
+Genuine run: three parallel subagents, each given one slice file, e.g.
+`/tmp/m2-demo/slice1.m2`:
+
+```
+-- job slice: k = 1, 2 of the family I_k = (x^(k+2) - y, x^(k+3) - z) in QQ[x,y,z]
+R = QQ[x,y,z]
+for k from 1 to 2 list (
+    J := ideal(x^(k+2) - y, x^(k+3) - z);
+    print ("k=" | toString k | " gbGens=" | toString (#flatten entries generators gb J) | " dim=" | toString (dim (R/J)))
+)
+```
+
+Each subagent simply runs `m2_run_script(path=...)` on its file; the
+orchestrator collects the three results (one M2 process per job, run
+concurrently — transcripts below from a real three-subagent fan-out; the
+trailing batch prompt is stripped in the current build):
+
+```
+SLICE 1 RESULT:  k=1 gbGens=4 dim=1   k=2 gbGens=5 dim=1
+SLICE 2 RESULT:  k=3 gbGens=6 dim=1   k=4 gbGens=7 dim=1
+SLICE 3 RESULT:  k=5 gbGens=8 dim=1   k=6 gbGens=9 dim=1
+```
+
+— matching §10's single-loop answer exactly.
+
+Notes:
+
+* Slices are self-contained (batch jobs share no state) — include all setup
+  in every script.
+* The host decides the fan-out: parallel tool calls in one turn, or
+  subagents (opencode `task` / Claude Code subagents). Both hammer the same
+  concurrency-safe server.
+* Tests pin the two halves of this story: concurrent `m2_evaluate` requests
+  return correctly paired results (serialization safety), and concurrent
+  `m2_run_script` jobs all return correct output (parallel existence). No
+  timing claims anywhere.
+* Footnote: M2 also has an in-kernel `parallelApply`; this project steers
+  beginners toward job-level parallelism, and first-class job handles
+  (`m2_submit_job` / status / wait / cancel over a kernel pool) are planned
+  for v0.2.

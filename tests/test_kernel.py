@@ -94,6 +94,19 @@ async def test_multiline_input(session):
     assert "6" in result.output
 
 
+async def test_family_loop(session):
+    """Beginner-facing pattern: compute invariants of a k-indexed ideal family
+    in ONE evaluation using M2's for-loop syntax with ':=' locals."""
+    result = await session.evaluate(
+        "R = QQ[x,y,z]\n"
+        "for k from 1 to 3 list (J := ideal(x^(k+2) - y, x^(k+3) - z); "
+        "(k, #flatten entries generators gb J, dim (R/J)))"
+    )
+    assert "{(1, 4, 1), (2, 5, 1), (3, 6, 1)}" in result.output
+    # session healthy afterwards
+    assert "2" in (await session.evaluate("1 + 1")).output
+
+
 async def test_timeout_kills_and_restarts(session):
     result = await session.evaluate("while true do()", timeout_s=3)
     assert result.timed_out

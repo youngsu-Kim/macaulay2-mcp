@@ -46,7 +46,13 @@ uv run macaulay2-mcp         # run the MCP server on stdio
 5. **Timeouts are author-set safety limits** (default 120s, max 3600s).
    Timeout messages must keep saying it is NOT an M2 error and that the
    session was restarted (state lost → retry self-contained).
-6. **No new user-facing config knobs** in v0.1 beyond `M2_BIN`. Pinned flags
+6. **Concurrency semantics are by design:** `m2_evaluate` serializes on the
+   session lock (one shared kernel = consistent state; concurrent requests
+   from subagents are safe, just queued), while `m2_run_script` takes no
+   lock (each job is an independent M2 process — that IS the parallelism
+   story until v0.2's job pool). Never "optimize away" the serialization.
+   Tests and docs pin outputs, NEVER timings.
+7. **No new user-facing config knobs** in v0.1 beyond `M2_BIN`. Pinned flags
    live in `config.py` (`M2_KERNEL_FLAGS`).
 
 ## Layout
@@ -68,6 +74,9 @@ e2e/                Docker + Ollama + opencode demo (opt-in: run_e2e.sh)
 * `gb I` returns a GroebnerBasis; see polynomials via `print generators (gb I)`.
 * A trailing `;` SUPPRESSES a statement's result display (`betti G;` prints
   nothing); `A; B` on one line shows only B. Use newlines + explicit `print`.
+* Family loops: `for k from 1 to n list (J := ideal(...); <expr>)` with `:=`
+  for per-iteration locals. `I_k = ...` is ONE symbol named "I_k", not
+  indexing. `print (a | b)` needs parens — `print a | b` is `(print a) | b`.
 * M2 strings use double quotes; single quotes are invalid.
 * `unloadPackage` and `importFile` do not exist in 1.26 — package "unload" =
   session reset; file import = evaluate the file's contents (m2_import_file).

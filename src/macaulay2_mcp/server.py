@@ -30,6 +30,12 @@ Macaulay2 1.26 idioms you will need:
 * Ring elements print with superscripts in plain text (e.g. `x^2` may show as a
   raised 2); parse accordingly.
 * M2 strings use DOUBLE quotes ("..."), not single quotes.
+* Loop over a family with: for k from 1 to 5 list (I := ideal(...); <expr>)
+  — ':=' scopes I locally per iteration. Trap: "I_k = ..." defines ONE
+  symbol named I_k (underscore is a name character, not indexing); use a
+  function instead: I = k -> ideal(...), then call it as I 3.
+* print takes one expression: print (a | b | c) — without parentheses,
+  "print a | b" parses as (print a) | b. Concatenate strings with '|'.
 * In m2_run_script (batch mode), only explicit `print` output is shown.
 * `help "topic"` works in-session via the m2_help tool.
 
@@ -45,6 +51,13 @@ m2_interrupt — M2 aborts the current input at a safe checkpoint, the running
 m2_evaluate returns with "error: interrupted", and all earlier definitions
 stay available. (A timeout, by contrast, kills and restarts the kernel and
 loses session state.)
+
+Parallelism: the shared session serializes concurrent m2_evaluate calls by
+design (one kernel, cooperating state). For independent heavy work — e.g.
+computing invariants for a whole family I_k — prefer self-contained
+m2_run_script jobs: each runs in its own M2 process and several run truly
+in parallel (issue them as parallel tool calls, or fan out across host
+subagents, each handling a slice of the family).
 """
 
 

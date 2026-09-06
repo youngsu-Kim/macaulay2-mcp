@@ -100,6 +100,11 @@ are real tested prompts; the exact outputs are in
   lowercase `h`: M2's CamelCase doc pointer `HilbertPolynomial` is an empty
   stub.)*
 * “Compute the primary decomposition of `ideal(x^2, x*y)`.”
+* “For the family `I_k = (x^(k+2) - y, x^(k+3) - z)` in `QQ[x,y,z]`, loop over
+  `k = 1..6` and tabulate the reduced Groebner basis sizes and the dimensions
+  of `R/I_k`.”
+* “Same family, but fan the work out across several subagents as independent
+  batch jobs and collect the results.” *(real parallel M2 processes)*
 * “Here is my `mycode.m2` file — import it into the session and call
   `myFunction`.” (state is kept between calls)
 
@@ -139,6 +144,12 @@ output, so your assistant can read and react to them.
   running call returns with `error: interrupted` — **all earlier definitions
   survive**. Only the timeout backstop (for computations that ignore the
   interrupt) restarts the kernel and loses state.
+* **Parallelism.** The shared session serializes evaluations by design (one
+  kernel = consistent state; safe for concurrent requests from subagents).
+  Genuine concurrency today: every `m2_run_script` spawns its own M2 process
+  and multiple jobs run in parallel — e.g. one subagent per slice of an
+  ideal family. First-class job submission (`m2_submit_job`, status/wait/
+  cancel over a kernel pool) is planned for v0.2.
 * **Unbalanced input** (e.g. a missing `}`) is rejected up front instead of
   hanging, and syntax errors that desynchronize the session trigger an
   automatic restart.

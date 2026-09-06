@@ -134,3 +134,51 @@ async def test_interrupt_running_computation_via_mcp():
 
         kept = await session.call_tool("m2_evaluate", {"code": "keepMe"})
         assert "99" in kept.content[0].text
+
+
+async def test_concurrent_evaluates_are_serialized_safely():
+    """Many simultaneous m2_evaluate calls must each receive exactly their
+    own result (the shared session lock serializes them against one kernel)."""
+    codes = [
+        ("1 + 1", "2"),
+        ("222 + 333", "555"),
+        ("6 * 7", "42"),
+    ]
+    params = StdioServerParameters(command=sys.executable, args=["-m", "macaulay2_mcp"])
+    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        results = await asyncio.gather(
+            *(session.call_tool("m2_evaluate", {"code": code}) for code, _ in codes)
+        )
+        for r, (code, value) in zip(results, codes):
+            assert not r.is_error
+            text = r.content[0].text
+            assert code in text  # its own echo
+            assert f"= {value}" in text  # its own result
+        # session still healthy after the concurrent burst
+        final = await session.call_tool("m2_evaluate", {"code": "9 - 4"})
+        assert "5" in final.content[0].text
+
+
+async def test_concurrent_run_scripts(tmp_path):
+    """m2_run_script takes no session lock: several jobs genuinely run as
+    parallel isolated M2 processes. Assert correctness (never timing)."""
+    scripts, values = [], []
+    for k in (1, 2, 3):
+        f = tmp_path / f"job{k}.m2"
+        f.write_text(
+            "R = QQ[x,y,z]\n"
+            f"J := ideal(x^({k + 2}) - y, x^({k + 3}) - z)\n"
+            'print ("gbGens=" | toString (#flatten entries generators gb J))\n'
+        )
+        scripts.append(str(f))
+        values.append(f"gbGens={k + 3}")
+    params = StdioServerParameters(command=sys.executable, args=["-m", "macaulay2_mcp"])
+    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        results = await asyncio.gather(
+            *(session.call_tool("m2_run_script", {"path": p}) for p in scripts)
+        )
+        for r, expected in zip(results, values):
+            assert not r.is_error
+            assert expected in r.content[0].text
