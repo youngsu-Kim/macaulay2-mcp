@@ -30,6 +30,9 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # required for PyPI trusted publishing (OIDC token minting)
     environment: pypi   # PyPI trusted publisher is bound to this environment
     steps:
       - uses: actions/download-artifact@v4
