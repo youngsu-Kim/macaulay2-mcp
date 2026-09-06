@@ -18,7 +18,11 @@ jobs:
 
       - name: Install Macaulay2 1.26 (latest stable)
         if: runner.os == 'macOS'
-        run: brew install macaulay2
+        run: |
+          brew tap Macaulay2/tap
+          brew trust --tap Macaulay2/tap 2>/dev/null || true   # newer Homebrew requires explicit tap trust
+          brew install macaulay2
+          M2 --version
 
       - name: Install Macaulay2 1.26 (latest stable)
         if: runner.os == 'Linux'

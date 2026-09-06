@@ -34,8 +34,12 @@ STARTUP_TIMEOUT_S = 30
 _VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 
 _INSTALL_HINT = """Install Macaulay2 (latest stable):
-  macOS:   brew install macaulay2
+  macOS:   brew install Macaulay2/tap/macaulay2
+           (adds a tap maintained by the Macaulay2 developers;
+            undo: brew untap Macaulay2/tap, after brew uninstall macaulay2)
   Ubuntu:  sudo add-apt-repository ppa:macaulay2/macaulay2 && sudo apt install macaulay2
+           (adds a PPA maintained by the Macaulay2 developers;
+            undo: sudo add-apt-repository --remove ppa:macaulay2/macaulay2)
   Other:   https://macaulay2.com/Downloads/
 If M2 is installed in a non-standard location, set the M2_BIN environment
 variable to the full path of the executable."""
@@ -134,9 +138,10 @@ def load_config() -> M2Config:
         raise UnsupportedM2Version(
             f"Found Macaulay2 {version_raw}, but this version of macaulay2-mcp only "
             f"supports 1.26.x (the latest stable release).\n\n"
-            f"Please upgrade Macaulay2:\n"
-            f"  macOS:   brew update && brew upgrade macaulay2\n"
+            f"To upgrade Macaulay2:\n"
+            f"  macOS:   brew tap Macaulay2/tap && brew update && brew upgrade macaulay2\n"
             f"  Ubuntu:  sudo apt update && sudo apt install macaulay2\n"
+            f"           (requires the Macaulay2 PPA added above)\n"
             f"Support for other versions may arrive in a future release."
         )
     return M2Config(binary=binary, version=version, version_raw=version_raw)

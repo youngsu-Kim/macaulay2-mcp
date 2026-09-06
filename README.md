@@ -27,8 +27,17 @@ AI    > m2_evaluate: R = QQ[x,y,z]; I = ideal(x^3 - y, x^4 - z)
 
 | You need | macOS | Ubuntu |
 |---|---|---|
-| Macaulay2 (latest stable, 1.26) | `brew install macaulay2` | `sudo add-apt-repository ppa:macaulay2/macaulay2 && sudo apt install macaulay2` |
+| Macaulay2 (latest stable, 1.26) | `brew install Macaulay2/tap/macaulay2` | `sudo add-apt-repository ppa:macaulay2/macaulay2 && sudo apt install macaulay2` |
 | [uv](https://docs.astral.sh/uv/) (runs the server, no install) | `brew install uv` | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+
+Both commands add a package repository maintained by the Macaulay2
+developers (a Homebrew *tap* / an APT *PPA*) — needed because `macaulay2` is
+not in Homebrew core and Ubuntu's own package is outdated. Recent Homebrew
+versions ask to *trust* a third-party tap before installing from it; trust
+entries live in `~/.homebrew/trust.json` and are reversible at any time:
+`brew untrust --tap Macaulay2/tap` (drop trust), `brew untap Macaulay2/tap`
+(remove the tap entirely, after `brew uninstall macaulay2`), or
+`sudo add-apt-repository --remove ppa:macaulay2/macaulay2` (PPA).
 
 **Then, one line for your client:**
 
@@ -158,11 +167,24 @@ output, so your assistant can read and react to them.
   commands). Both Claude Code and opencode ask for your approval per tool
   call by default — keep it that way.
 
+## Design principles
+
+1. **Local-first.** The server runs on your machine against your Macaulay2
+   installation. No accounts, no telemetry, no network calls.
+2. **Messages inform, never direct.** Every message states what it does and
+   whether (and how) it is reversible; we explain decisions instead of
+   telling you to click through them.
+3. **Errors carry their own fix.** "Not found" ships with install commands;
+   "wrong version" ships with the exact upgrade line; timeouts explain the
+   retry recipe.
+4. **Safety limits are explicit.** Timeouts are author-set, labeled as such,
+   distinguishable from real errors, and adjustable per call.
+
 ## Installing Macaulay2 (details)
 
 | OS | Command |
 |---|---|
-| macOS (Homebrew) | `brew install macaulay2` |
+| macOS (Homebrew) | `brew install Macaulay2/tap/macaulay2` (the tap also exposes `M2` as an alias; `brew trust Macaulay2/tap` first on very recent Homebrew) |
 | Ubuntu (official M2 PPA — always latest) | `sudo add-apt-repository ppa:macaulay2/macaulay2 && sudo apt install macaulay2` |
 | Fedora | `sudo dnf install Macaulay2` (or the [M2 repo](https://macaulay2.com/Repositories/Fedora/)) |
 | Debian stable | [M2 website repo](https://macaulay2.com/Repositories/Debian/) (distro version is older; v0.1 needs 1.26) |
@@ -185,7 +207,7 @@ tools in action.
 | Symptom | Fix |
 |---|---|
 | `selftest` says *Macaulay2 was not found* | Install M2 (table above) or set `M2_BIN`. |
-| *Found Macaulay2 1.22.05, but ... only supports 1.26.x* | Upgrade: `brew upgrade macaulay2` or `sudo apt update && sudo apt install macaulay2` (with the M2 PPA added). |
+| *Found Macaulay2 1.22.05, but ... only supports 1.26.x* | Upgrade: `brew tap Macaulay2/tap && brew update && brew upgrade macaulay2` or `sudo apt update && sudo apt install macaulay2` (with the M2 PPA added). |
 | Server doesn't appear in the client | Restart the client; run `uvx macaulay2-mcp selftest` manually to see errors; check `claude mcp list` (Claude Code) or `opencode mcp list` (opencode). |
 | A computation times out | Retry with a larger `timeout_s` (ask your assistant to), or write a script and use `m2_run_script`. To cancel a running computation while keeping session state, have the assistant call `m2_interrupt`. |
 | Something about an unbalanced `}` | Your (or the assistant's) code was missing a closing bracket — the error message says so; just fix and resend. |

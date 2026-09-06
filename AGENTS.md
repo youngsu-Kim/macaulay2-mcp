@@ -54,6 +54,12 @@ uv run macaulay2-mcp         # run the MCP server on stdio
    Tests and docs pin outputs, NEVER timings.
 7. **No new user-facing config knobs** in v0.1 beyond `M2_BIN`. Pinned flags
    live in `config.py` (`M2_KERNEL_FLAGS`).
+8. **Messages inform, never direct.** Every user-facing string (install
+   hints, errors, tool outputs, README) states what the suggested action
+   does and whether it is reversible — and how to undo it. We do not tell
+   users to blindly agree/answer yes; we explain the decision and leave it
+   to them. Applies equally to LLM-facing text (INSTRUCTIONS, docstrings):
+   the assistant relays information, not pressure.
 
 ## Layout
 
