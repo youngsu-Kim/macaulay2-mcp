@@ -13,3 +13,5 @@
 {"id": "dim_ring", "code": "R = QQ[x,y,z]\ndim R", "expect": ["o3 = 3"], "note": "Krull dimension of a polynomial ring; fresh-session indices are deterministic: probe=i1, R=i2, dim=i3"}
 {"id": "dim_quotient", "code": "R = QQ[x,y,z]\nI = ideal(x^3 - y, x^4 - z)\ndim (R/I)", "expect": ["o4 = 1"], "note": "monomial curve (3,4) is a curve; note the required parentheses: 'dim R/I' parses differently"}
 {"id": "family_loop", "code": "R = QQ[x,y,z]\nfor k from 1 to 3 list (J := ideal(x^(k+2) - y, x^(k+3) - z); (k, #flatten entries generators gb J, dim (R/J)))", "expect": ["{(1, 4, 1), (2, 5, 1), (3, 6, 1)}"], "note": "for-loop family computation: ':=' scopes J locally per iteration; exact tuple-list rendering pinned"}
+{"id": "error_then_continue", "code": "a = 10\nnoSuchFn(1)\nb = a + 5\n", "expect": ["o2 = 10", "error", "o4 = 15"], "note": "M2 REPL error semantics: an error in input i3 does NOT stop i4; fresh-session indices are deterministic (probe=i1)"}
+{"id": "partial_input_effect", "code": "x = 2; bogusFn(x)\nx\n", "expect": ["error", "o4 = 2"], "note": "no rollback: x = 2 took effect even though the same logical input errored on bogusFn(x)"}

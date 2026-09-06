@@ -338,3 +338,61 @@ Notes:
   beginners toward job-level parallelism, and first-class job handles
   (`m2_submit_job` / status / wait / cancel over a kernel pool) are planned
   for v0.2.
+
+## 12. Error handling: cascades, halts, and choosing the recovery
+
+> Define `sBefore = 7`, compute something that fails, then `sAfter`.
+
+Default (REPL) semantics — M2 **keeps running** after the error, and the
+server appends the options menu instead of deciding for you (genuine
+transcript, server 0.1.0):
+
+```
+i2 : sBefore = 7
+o2 = 7
+i3 : noSuchFn(1)
+stdio:3:8:(3):[1]: error: no method for adjacent objects: ...
+i4 : sAfter = sBefore + 1
+o4 = 8
+
+NOTE(macaulay2-mcp): M2 reports an error above, but as a REPL, it did NOT
+halt — inputs after the failing line already ran (possibly on broken
+assumptions), and M2 has no rollback ... Before retrying, ask the user how
+to proceed:
+  (1) CONTINUE — resend only the corrected failing statement ...
+  (2) RESTART — m2_session_reset, then rerun a corrected, self-contained
+      block. This is irreversible: ALL current session definitions are lost.
+  (3) INSPECT — evaluate the affected names first ...
+```
+
+The same block with `stop_on_error=True` — everything after the error is
+never executed (note `p2` stays undefined afterwards):
+
+```
+m2_evaluate("p1 = 1\nnoSuchFn(9)\np2 = p1 + 1\np3 = p1 + 2",
+            stop_on_error=True)
+```
+
+```
+i8 : p1 = 1
+o8 = 1
+i10 : noSuchFn(9)
+stdio:10:8:(3):[1]: error: no method for adjacent objects: ...
+
+NOTE(macaulay2-mcp): the run halted at the failing input (stop_on_error):
+2 later input(s) were NOT executed. M2 has no rollback, so the failing
+line's earlier statements took effect ... Before retrying, ask the user ...
+```
+
+```
+m2_evaluate("p2")  →  o12 = p2 : Symbol     ← never assigned
+```
+
+Semantics worth knowing, all pinned by golden tests:
+
+* No rollback even *within* a line: `x = 2; bogusFn(x)` leaves `x = 2`
+  defined after erroring (golden `partial_input_effect`).
+* `stop_on_error` requires self-contained lines (splitting happens at
+  top-level newlines; don't break a line after a binary operator).
+* `m2_run_script` is the opposite by design: batch mode with M2's `--stop`
+  halts at the first error.

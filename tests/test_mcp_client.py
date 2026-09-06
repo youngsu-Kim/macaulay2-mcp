@@ -182,3 +182,39 @@ async def test_concurrent_run_scripts(tmp_path):
         for r, expected in zip(results, values):
             assert not r.is_error
             assert expected in r.content[0].text
+
+
+async def test_error_note_appears_and_absent_on_success():
+    async def run(session: ClientSession):
+        bad = await session.call_tool("m2_evaluate", {"code": "noSuchFn(1)\nxNote = 5"})
+        good = await session.call_tool("m2_evaluate", {"code": "2+2"})
+        return bad.content[0].text, good.content[0].text
+
+    bad_text, good_text = await _with_server(run)
+    assert "ask the user" in bad_text and "CONTINUE" in bad_text
+    assert "5" in bad_text  # the later line ran (REPL semantics visible)
+    assert "ask the user" not in good_text and "4" in good_text
+
+
+async def test_stop_on_error_via_mcp():
+    async def run(session: ClientSession):
+        halted = await session.call_tool(
+            "m2_evaluate",
+            {"code": "q1 = 1\nnoSuchFn(9)\nq2 = 2", "stop_on_error": True},
+        )
+        probe = await session.call_tool("m2_evaluate", {"code": "q2"})
+        return halted.content[0].text, probe.content[0].text
+
+    halted_text, probe_text = await _with_server(run)
+    assert "were NOT executed" in halted_text
+    assert "Symbol" in probe_text  # q2 never ran
+
+
+async def test_evaluate_schema_has_stop_on_error():
+    async def get(session: ClientSession):
+        tools = await session.list_tools()
+        schema = {t.name: t.input_schema for t in tools.tools}["m2_evaluate"]
+        return schema["properties"].keys()
+
+    props = await _with_server(get)
+    assert {"code", "timeout_s", "stop_on_error"} <= set(props)

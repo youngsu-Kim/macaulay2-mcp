@@ -9,7 +9,12 @@ from macaulay2_mcp.config import (
     UnsupportedM2Version,
     load_config,
 )
-from macaulay2_mcp.kernel import M2ScriptRunner, M2Session
+from macaulay2_mcp.kernel import (
+    M2ScriptRunner,
+    M2Session,
+    contains_m2_error,
+    split_logical_inputs,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -218,3 +223,71 @@ def test_ends_unbalanced_scanner():
     assert not ends_unbalanced("1 + 1 -- ( comment")
     # extra closer: not a hang risk, M2 will error itself
     assert not ends_unbalanced(") ")
+
+
+# ---------------------------------------------------------------------------
+# Logical-input splitter (pure function; no M2 needed)
+# ---------------------------------------------------------------------------
+
+
+def test_split_simple_lines():
+    assert split_logical_inputs("a = 1\nb = 2\n") == ["a = 1", "b = 2"]
+
+
+def test_split_keeps_multiline_input_together():
+    code = "L = {1,\n2,\n3}\nsum L"
+    assert split_logical_inputs(code) == ["L = {1,\n2,\n3}", "sum L"]
+
+
+def test_split_attaches_comments_forward_and_drops_trailing():
+    chunks = split_logical_inputs("-- lead\nx = 1\n\n-- tail\n")
+    assert chunks == ["-- lead\nx = 1"]  # trailing comment dropped (would dangle)
+
+
+def test_split_ignores_brackets_in_strings_and_comments():
+    code = 's = "a{b"\nprint ") not a closer"\nc = 3'
+    assert split_logical_inputs(code) == ['s = "a{b"', 'print ") not a closer"', "c = 3"]
+
+
+def test_split_known_limitation_trailing_operator():
+    # Documented tradeoff: M2 would continue this line; our splitter cuts it.
+    assert split_logical_inputs("y = 2 +\n3\n") == ["y = 2 +", "3"]
+
+
+def test_contains_m2_error_signature():
+    assert contains_m2_error("stdio:3:8:(3):[1]: error: no method for adjacent objects:")
+    assert contains_m2_error("/opt/x/Classic.m2:2:10:(3):[9]: error: boom")
+    assert not contains_m2_error('print "error: oops"\nerror: oops')
+    assert not contains_m2_error("o2 = 15\n\no2 : ZZ")
+
+
+# ---------------------------------------------------------------------------
+# Handshake robustness & stop_on_error (require live M2)
+# ---------------------------------------------------------------------------
+
+
+async def test_trailing_comment_does_not_swallow_marker(session):
+    # Regression: a dangling last line absorbs the marker's iN:-anchored
+    # echo; the handshake must still complete via the unique marker text.
+    result = await session.evaluate("1+1\n-- trailing note\n", timeout_s=20)
+    assert not result.timed_out
+    assert "2" in result.output
+
+
+async def test_continue_mode_runs_past_errors(session):
+    r = await session.evaluate("sBefore = 7\nnoSuchFn(1)\nsAfter = sBefore + 1")
+    assert r.errored and not r.stopped
+    after = await session.evaluate("sAfter")
+    assert "8" in after.output  # REPL semantics: later inputs ran
+
+
+async def test_stop_on_error_halts_before_side_effects(session):
+    r = await session.evaluate(
+        "p1 = 1\nnoSuchFn(9)\np2 = p1 + 1\np3 = p1 + 2",
+        stop_on_error=True,
+    )
+    assert r.errored and r.stopped and r.not_sent == 2
+    p2 = await session.evaluate("p2")
+    assert "Symbol" in p2.output  # never assigned: halt worked
+    p1 = await session.evaluate("p1")
+    assert "1" in p1.output  # pre-error statements took effect

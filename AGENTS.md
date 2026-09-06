@@ -60,6 +60,19 @@ uv run macaulay2-mcp         # run the MCP server on stdio
    users to blindly agree/answer yes; we explain the decision and leave it
    to them. Applies equally to LLM-facing text (INSTRUCTIONS, docstrings):
    the assistant relays information, not pressure.
+9. **Error-continuation semantics are a pinned contract.** M2 continues
+   running inputs after an error (no rollback; even mid-input side effects
+   persist) — golden cases `error_then_continue`/`partial_input_effect` pin
+   this. The continue/restart/inspect options NOTE is composed ONLY in the
+   `m2_evaluate` handler for runtime errors (never for interrupted,
+   restart, or timeout results, which have their own messages).
+   `stop_on_error` uses `split_logical_inputs` (blank/comment lines attach
+   forward; trailing uncompletable lines dropped; documented limitation:
+   dangling trailing operators). `_marker_handshake` matches the marker
+   TEXT anywhere in a line and tracks the index from any `iN :` line —
+   do NOT re-anchor to `^iN : <marker>`: a code block ending in a comment
+   absorbs the marker as a continuation line and the handshake would hang
+   to timeout (regression test: `test_trailing_comment_does_not_swallow_marker`).
 
 ## Layout
 

@@ -126,7 +126,7 @@ Eight tools, one shared M2 session:
 
 | Tool | What it does |
 |---|---|
-| `m2_evaluate(code, timeout_s?)` | Evaluate M2 code in the persistent session. State carries over between calls. |
+| `m2_evaluate(code, timeout_s?, stop_on_error?)` | Evaluate M2 code in the persistent session. State carries over between calls; `stop_on_error=True` halts at the first error instead of running the rest. |
 | `m2_interrupt()` | Stop a running computation: M2 aborts at a safe checkpoint and **keeps** all earlier definitions (unlike a timeout, which restarts the kernel). |
 | `m2_session_reset()` | Restart the kernel — a clean slate. |
 | `m2_help(topic)` | M2 documentation lookup (`help "topic"`). |
@@ -159,6 +159,13 @@ output, so your assistant can read and react to them.
   and multiple jobs run in parallel — e.g. one subagent per slice of an
   ideal family. First-class job submission (`m2_submit_job`, status/wait/
   cancel over a kernel pool) is planned for v0.2.
+* **Errors inform, they don't decide.** M2 is a REPL: a runtime error does
+  *not* stop the remaining lines from running, and there is no rollback.
+  When that happens, the tool result appends an explicit menu — CONTINUE
+  (fix and resend just the failing statement), RESTART (session reset —
+  irreversible, all definitions lost), or INSPECT (see what survived) — and
+  your assistant is instructed to put those choices to *you*. To prevent
+  the cascade up front, run blocks with `stop_on_error=True`.
 * **Unbalanced input** (e.g. a missing `}`) is rejected up front instead of
   hanging, and syntax errors that desynchronize the session trigger an
   automatic restart.

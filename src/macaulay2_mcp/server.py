@@ -52,6 +52,18 @@ m2_evaluate returns with "error: interrupted", and all earlier definitions
 stay available. (A timeout, by contrast, kills and restarts the kernel and
 loses session state.)
 
+Errors: M2 is a REPL — a runtime error in one statement does NOT stop the
+rest of your code from running (later inputs execute, possibly on broken
+assumptions), and there is no rollback: even a failing line like "x = 2;
+bogusFn(x)" leaves x = 2 defined. When a result reports an error, the server
+appends options (continue / restart / inspect) — present them to the user
+instead of choosing silently. To prevent cascades, send multi-statement
+blocks with stop_on_error=True: statements are then submitted one at a time
+(every line must be self-contained: end each statement fully; do not break
+a line after a binary operator) and everything after the first error is not
+executed. Note the asymmetry: m2_run_script runs in M2's batch mode with
+--stop, so a script halts at its first error by design.
+
 Parallelism: the shared session serializes concurrent m2_evaluate calls by
 design (one kernel, cooperating state). For independent heavy work — e.g.
 computing invariants for a whole family I_k — prefer self-contained
@@ -63,6 +75,32 @@ subagents, each handling a slice of the family).
 
 def _escape_m2_string(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+_ERROR_OPTIONS_NOTE = """NOTE(macaulay2-mcp): M2 reports an error above, but as a \
+REPL, it did NOT halt — inputs after the failing line already ran (possibly on \
+broken assumptions), and M2 has no rollback for partial state (a failed line \
+like "x = 2; bogusFn(x)" still leaves x = 2 defined). Before retrying, ask the \
+user how to proceed:
+  (1) CONTINUE — resend only the corrected failing statement, plus any later \
+statements that failed because of it; re-check anything computed after the error.
+  (2) RESTART — m2_session_reset, then rerun a corrected, self-contained block. \
+This is irreversible: ALL current session definitions are lost.
+  (3) INSPECT — evaluate the affected names first to see what survived.
+To prevent cascades on the next attempt, resend with stop_on_error=True \
+(inputs after the first error will not be executed)."""
+
+
+_STOPPED_ADDENDUM = """NOTE(macaulay2-mcp): the run halted at the failing input \
+(stop_on_error): {not_sent} later input(s) were NOT executed. M2 has no \
+rollback, so the failing line's earlier statements took effect (e.g. \
+"x = 2; bogusFn(x)" leaves x = 2 defined). Before retrying, ask the user how \
+to proceed:
+  (1) CONTINUE — resend the corrected failing statement followed by the \
+unexecuted remainder.
+  (2) RESTART — m2_session_reset, then rerun the corrected block in full. \
+This is irreversible: ALL current session definitions are lost.
+  (3) INSPECT — evaluate the affected names first to see what survived."""
 
 
 def build_server() -> MCPServer:
@@ -82,7 +120,9 @@ def build_server() -> MCPServer:
     runner = M2ScriptRunner()
 
     @server.tool()
-    async def m2_evaluate(code: str, timeout_s: int = DEFAULT_TIMEOUT_S) -> str:
+    async def m2_evaluate(
+        code: str, timeout_s: int = DEFAULT_TIMEOUT_S, stop_on_error: bool = False
+    ) -> str:
         """Evaluate Macaulay2 code in the persistent session and return its output.
 
         State (rings, variables, ideals, ...) persists across calls. M2 errors
@@ -97,9 +137,23 @@ def build_server() -> MCPServer:
                 it for heavy computations (large Groebner bases, Hilbert
                 polynomials, ...). On timeout the session is restarted, so the
                 retried code must include all setup again.
+            stop_on_error: Default False = REPL semantics (an error does not
+                stop later lines from running). True sends the code input by
+                input and halts at the first error, leaving later inputs
+                unexecuted. Requires each line to be a self-contained
+                statement (do not break a line after a binary operator).
         """
-        result = await session.evaluate(code, timeout_s)
-        return result.output
+        result = await session.evaluate(code, timeout_s, stop_on_error=stop_on_error)
+        text = result.output
+        if result.errored and not result.interrupted and not result.crashed:
+            text += "\n\n" + (
+                _STOPPED_ADDENDUM.format(not_sent=result.not_sent)
+                if result.stopped
+                else _ERROR_OPTIONS_NOTE
+            )
+        elif result.not_sent and not result.crashed:
+            text += f"\n\n(stop_on_error: {result.not_sent} later input(s) were not executed.)"
+        return text
 
     @server.tool()
     async def m2_interrupt() -> str:
