@@ -17,22 +17,14 @@ Protocol (verified against M2 1.26.06 over piped stdin/stdout):
   line read is absorbed as a continuation. A marker must therefore be a
   complete statement.
 * Completion of an evaluation is detected with a two-step random marker:
-  ``m2MCP<12hex> = 1`` appended after the code. Step 1: a line ending with
-  ``m2MCP<...> = 1`` arrives strictly after all output of the code — usually
-  its own echo ``iM : m2MCP<...> = 1``, but indented if the code ended with
-  a dangling line (e.g. a trailing comment) that absorbed the marker.
-  Step 2: the marker input's deterministic result ``oM = 1`` (M being the
-  last-seen input index) is consumed and discarded.
+  ``m2MCP<12hex> = 1`` appended after the code. Step 1: the marker's echo
+  ``iM : m2MCP<...> = 1`` arrives strictly after all output of the code.
+  Step 2: the marker's deterministic result ``oM = 1`` is consumed and
+  discarded.
 * Multi-line input (e.g. an unbalanced ``{ ... }``) is read as one logical
   input. Code with a syntax error that leaves the input unbalanced swallows
   the marker line; the resulting "syntax error" on stderr is detected and
   the session is restarted to resynchronize.
-* SIGINT (see :meth:`M2Session.interrupt`) aborts the current input at M2's
-  safe checkpoints: ``error: interrupted`` is printed, prompt indices stay
-  in sync, and the buffered marker still executes — so an in-flight
-  ``evaluate()`` completes its handshake and returns normally. SIGINT while
-  the kernel merely waits for input only emits a bare prompt line (filtered
-  from evaluation blocks). Both behaviours verified on M2 1.26.06.
 """
 
 from __future__ import annotations
@@ -40,7 +32,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-import signal
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,19 +47,12 @@ from .config import (
     clamp_timeout,
     load_config,
 )
-from .scanner import mask
 
 logger = logging.getLogger("macaulay2_mcp.kernel")
 
 
 class KernelCrashed(Exception):
     """The M2 process exited unexpectedly."""
-
-
-# A line that is exactly a bare prompt (``iN :``). M2 emits these when it
-# receives SIGINT while waiting for input; they carry no information and
-# would otherwise pollute the next evaluation's block.
-_BARE_PROMPT_RE = re.compile(r"^i\d+ :[ \t]*\r?$")
 
 
 def ends_unbalanced(code: str) -> bool:
@@ -78,74 +62,34 @@ def ends_unbalanced(code: str) -> bool:
     M2 in pipe mode would wait forever for continuation lines in that case
     (swallowing the marker we append), so we reject such input up front.
     """
-    masked = mask(code)
-    depth = 0
-    for c in masked.text:
-        if c in "([{":
-            depth += 1
-        elif c in ")]}" and depth > 0:
-            depth -= 1
-    return depth > 0 or masked.ends_in_string
-
-
-# M2 error reports begin with a location like ``stdio:3:8:(3):[1]: error:``
-# or ``/path/Classic.m2:2:10:(3):[9]: error:``. Requiring that shape avoids
-# false positives from ordinary output that merely contains the word "error".
-_M2_ERROR_RE = re.compile(r"^[^\s:][^:]*:\d+:\d+:.*\berror\b", re.MULTILINE)
-
-
-def contains_m2_error(text: str) -> bool:
-    """True if ``text`` contains a M2 error report line."""
-    return _M2_ERROR_RE.search(text) is not None
-
-
-def split_logical_inputs(code: str) -> list[str]:
-    """Split ``code`` into M2 logical inputs, for stop-on-error sending.
-
-    A split happens at a newline only when the accumulated text is balanced
-    (bracket depth 0, outside string literals). Blank and comment-only lines
-    never complete a logical input in pipe mode (they dangle and absorb the
-    next line), so they attach to the following statement instead — matching
-    M2's own grouping.
-
-    Known limitation (documented in the server's instructions): a line ending
-    in a dangling binary operator (``y = 2 +``) is balanced by this scanner
-    but incomplete for M2's parser; keep every line self-contained when using
-    stop_on_error. Trailing blank/comment lines (uncompletable) are dropped.
-    """
-    masked = mask(code).text
-    chunks: list[str] = []
-    current: list[str] = []
-    depth = 0
+    stack: list[str] = []
+    pairs = {")": "(", "]": "[", "}": "{"}
     in_str = False
-    line_has_content = False
     i, n = 0, len(code)
     while i < n:
-        line_start = i
-        while i < n and code[i] != "\n":
-            c = masked[i]
+        c = code[i]
+        if in_str:
+            if c == "\\":
+                i += 2
+                continue
             if c == '"':
-                in_str = not in_str
-                line_has_content = True
-            elif c in "([{":
-                depth += 1
-                line_has_content = True
-            elif c in ")]}":
-                depth = max(0, depth - 1)
-                line_has_content = True
-            elif not c.isspace():
-                line_has_content = True
+                in_str = False
             i += 1
-        i += 1  # consume the newline
-        current.append(code[line_start : i - 1])
-        if line_has_content and depth == 0 and not in_str:
-            chunks.append("\n".join(current))
-            current = []
-            line_has_content = False
-    # Anything left unflushed is a run of blank/comment lines (content at
-    # depth 0 flushes, and unbalanced code is rejected before splitting by
-    # ends_unbalanced). It would dangle in M2, so it is dropped.
-    return chunks
+            continue
+        if c == '"':
+            in_str = True
+            i += 1
+            continue
+        if c == "-" and i + 1 < n and code[i + 1] == "-":
+            while i < n and code[i] != "\n":
+                i += 1
+            continue
+        if c in "([{":
+            stack.append(c)
+        elif c in pairs and (not stack or stack.pop() != pairs[c]):
+            return False  # extra closer: M2 will report the error itself
+        i += 1
+    return bool(stack) or in_str
 
 
 @dataclass
@@ -153,10 +97,6 @@ class EvalResult:
     output: str
     timed_out: bool = False
     crashed: bool = False
-    interrupted: bool = False
-    errored: bool = False  # block contains an M2 error report
-    stopped: bool = False  # stop_on_error: later inputs were NOT sent
-    not_sent: int = 0  # number of inputs skipped by stopping
     stderr: str = ""
 
 
@@ -215,28 +155,8 @@ class M2Session:
         self._prompt_index = 0
         self._lock = asyncio.Lock()
         self._config_error: str | None = None
-        self._busy = False
 
     # ------------------------------------------------------------------ setup
-
-    def interrupt(self) -> bool:
-        """Send SIGINT to the kernel if (and only if) a computation is running.
-
-        Lock-free by design: called from another coroutine while ``evaluate()``
-        awaits M2 output. M2's default interrupt handling aborts the current
-        input at a safe checkpoint and returns to the prompt; state defined by
-        earlier completed statements survives. Verified on M2 1.26.06.
-
-        Returns True if a signal was sent, False if nothing was running.
-        """
-        if not self._busy or self._proc is None or self._proc.returncode is not None:
-            return False
-        try:
-            self._proc.send_signal(signal.SIGINT)
-        except ProcessLookupError:
-            return False
-        logger.info("sent SIGINT to the M2 kernel")
-        return True
 
     def _ensure_config(self) -> M2Config:
         if self._config is None:
@@ -313,18 +233,12 @@ class M2Session:
         """Write ``write`` (which must end with the marker statement) and
         complete the two-step marker handshake.
 
-        Step 1: read until a line whose text ends with ``<marker> = 1`` —
-        this arrives strictly after all output of the preceding code. The
-        marker normally appears as its own echo (``iN : <marker> = 1``), but
-        when the code ends with a dangling line (e.g. a trailing comment)
-        the marker is absorbed as a continuation line and echoed indented
-        instead; matching on the unique marker text handles both. The input
-        index is tracked from any ``iN :`` line so step 2 can wait for the
-        right result line.
+        Step 1: read until the marker's echo ``iN : <marker> = 1`` — this
+        arrives strictly after all output of the preceding code.
         Step 2: consume the marker's deterministic result ``oN = 1``.
 
-        Returns everything printed before the marker line (input echoes
-        included; marker line excluded). Raises asyncio.TimeoutError or
+        Returns everything printed before the marker's echo (input echoes
+        included; marker lines excluded). Raises asyncio.TimeoutError or
         KernelCrashed.
         """
         assert self._proc is not None and self._proc.stdin is not None
@@ -333,31 +247,24 @@ class M2Session:
 
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout_s
-        marker_re = re.compile(rf"\b{re.escape(marker)} = 1[ \t]*\r?$")
-        index_re = re.compile(r"^i(\d+) :")
+        echo_re = re.compile(rf"^i(\d+) : {re.escape(marker)} = 1[ \t]*\r?$")
         result_re = re.compile(r"^o(\d+) = 1[ \t]*\r?$")
         lines: list[str] = []
-        last_index = self._prompt_index
         marker_index: int | None = None
         while True:
             text = await self._read_line(deadline)
             if marker_index is None:
-                m = index_re.match(text)
+                m = echo_re.match(text)
                 if m:
-                    last_index = int(m.group(1))
-                if marker_re.search(text):
-                    marker_index = last_index
+                    marker_index = int(m.group(1))
                     self._prompt_index = max(self._prompt_index, marker_index)
-                    continue
-                if _BARE_PROMPT_RE.match(text):
-                    # artifact of a SIGINT received while M2 waited for input
                     continue
                 lines.append(text)
             else:
                 m = result_re.match(text)
                 if m and int(m.group(1)) == marker_index:
                     return "".join(lines)
-                # Other lines between the marker and its result belong to
+                # Other lines between the echo and the marker result belong to
                 # no one (blank lines); drop them.
 
     async def _send_and_wait(self, code: str, marker: str, timeout_s: float) -> str:
@@ -372,16 +279,9 @@ class M2Session:
     # ------------------------------------------------------------- evaluate
 
     async def evaluate(
-        self, code: str, timeout_s: float = DEFAULT_TIMEOUT_S, *, stop_on_error: bool = False
+        self, code: str, timeout_s: float = DEFAULT_TIMEOUT_S
     ) -> EvalResult:
         """Evaluate M2 code in the persistent session.
-
-        With ``stop_on_error=False`` (the default) the code is sent as one
-        submission and behaves like a human at the REPL: an error in one
-        input does NOT prevent later inputs from running (M2 has no
-        rollback). With ``stop_on_error=True`` the code is split into
-        logical inputs and sent one at a time; on the first error the
-        remaining inputs are NOT sent.
 
         On timeout the kernel is killed and restarted (state is lost); the
         returned output explains this.
@@ -403,127 +303,48 @@ class M2Session:
                         "for the closing part. Balance the expression and retry."
                     )
                 )
-            if stop_on_error:
-                return await self._evaluate_stopping(code, timeout_s)
-            return await self._evaluate_whole(code, timeout_s)
-
-    async def _attempt(self, code: str, timeout_s: int) -> tuple[str | None, EvalResult | None]:
-        """Send one submission and wait for its marker handshake.
-
-        Returns (block, None) on success, or (None, EvalResult) when a
-        timeout/crash path already produced the final result.
-        """
-        marker = self._new_marker()
-        logger.debug("evaluating %d chars of M2 code (timeout %ds)", len(code), timeout_s)
-        self._busy = True
-        try:
-            block = await self._send_and_wait(code, marker, timeout_s)
-        except asyncio.CancelledError:
-            # The client cancelled this call: ask M2 to stop too (graceful,
-            # keeps state) and let the cancellation propagate.
-            self.interrupt()
-            raise
-        except asyncio.TimeoutError:
-            logger.warning("evaluation timed out after %ds; restarting kernel", timeout_s)
-            await self._kill()
-            return None, EvalResult(output=_session_timeout_message(timeout_s), timed_out=True)
-        except KernelCrashed as exc:
-            logger.warning("kernel crashed: %s; restarting", exc)
-            await self._kill()
-            return None, EvalResult(
-                output=(
-                    f"ERROR: the Macaulay2 kernel exited unexpectedly ({exc}). "
-                    f"The session was restarted.\n"
-                    "Please retry your computation; if it fails again, the code "
-                    "may be triggering a kernel bug (try a smaller input or "
-                    "m2_run_script in an isolated process)."
-                ),
-                crashed=True,
-            )
-        finally:
-            self._busy = False
-        return block, None
-
-    async def _finalize_block(self, block: str) -> EvalResult:
-        """Post-process a successful continue-mode block."""
-        # stderr is merged into the stream, so M2's error text is already in
-        # `block`, in true stream order.
-        if "syntax error" in block:
-            # An unbalanced syntax error may have swallowed the marker and
-            # desynchronized the input stream; restart to be safe.
-            logger.warning("syntax error desync; restarting kernel")
-            await self._kill()
-            return EvalResult(
-                output=(
-                    f"{block.strip()}\n\n"
-                    "NOTE: a syntax error left the session input stream "
-                    "unsynchronized, so the session was restarted. All "
-                    "objects defined earlier no longer exist — retry with "
-                    "corrected, self-contained code."
-                ),
-                crashed=True,
-                errored=True,
-            )
-        output = block.strip()
-        if not output:
-            output = "(the code ran successfully and produced no output)"
-        # stderr is merged in-stream, so an m2_interrupt shows up as
-        # "error: interrupted" inside `block`.
-        interrupted = "error: interrupted" in block
-        if interrupted:
-            output += (
-                "\n\nNOTE: the computation was stopped on request "
-                "(m2_interrupt). Everything defined by statements that "
-                "completed before the interrupted one is still available; "
-                "the session is ready for new input."
-            )
-        return EvalResult(
-            output=output,
-            interrupted=interrupted,
-            errored=contains_m2_error(block) and not interrupted,
-        )
-
-    async def _evaluate_whole(self, code: str, timeout_s: int) -> EvalResult:
-        block, early = await self._attempt(code, timeout_s)
-        if early is not None:
-            return early
-        assert block is not None
-        return await self._finalize_block(block)
-
-    async def _evaluate_stopping(self, code: str, timeout_s: int) -> EvalResult:
-        chunks = split_logical_inputs(code)
-        if not chunks:
-            return EvalResult(output="(empty input; nothing was evaluated)")
-        collected: list[str] = []
-        for idx, chunk in enumerate(chunks):
-            remaining = len(chunks) - idx - 1
-            block, early = await self._attempt(chunk, timeout_s)
-            if early is not None:
-                early.not_sent = remaining if early.timed_out or early.crashed else 0
-                return early
-            assert block is not None
-            if "syntax error" in block:
-                # parse-level desync risk is global: reuse the resync path
-                early = await self._finalize_block(block)
-                early.not_sent = remaining
-                return early
-            stripped = block.strip()
-            if stripped:
-                collected.append(stripped)
-            if contains_m2_error(block):
-                interrupted = "error: interrupted" in block
-                text = "\n\n".join(collected) if collected else "(no output before the error)"
+            marker = self._new_marker()
+            logger.debug("evaluating %d chars of M2 code (timeout %ds)", len(code), timeout_s)
+            try:
+                block = await self._send_and_wait(code, marker, timeout_s)
+            except asyncio.TimeoutError:
+                logger.warning("evaluation timed out after %ds; restarting kernel", timeout_s)
+                await self._kill()
+                return EvalResult(output=_session_timeout_message(timeout_s), timed_out=True)
+            except KernelCrashed as exc:
+                logger.warning("kernel crashed: %s; restarting", exc)
+                await self._kill()
                 return EvalResult(
-                    output=text,
-                    errored=True,
-                    stopped=True,
-                    interrupted=interrupted,
-                    not_sent=remaining,
+                    output=(
+                        f"ERROR: the Macaulay2 kernel exited unexpectedly ({exc}). "
+                        f"The session was restarted.\n"
+                        "Please retry your computation; if it fails again, the code "
+                        "may be triggering a kernel bug (try a smaller input or "
+                        "m2_run_script in an isolated process)."
+                    ),
+                    crashed=True,
                 )
-        text = "\n\n".join(collected).strip()
-        if not text:
-            text = "(the code ran successfully and produced no output)"
-        return EvalResult(output=text)
+            # stderr is merged into the stream, so M2's error text is already in
+            # `block`, in true stream order.
+            if "syntax error" in block:
+                # An unbalanced syntax error may have swallowed the marker and
+                # desynchronized the input stream; restart to be safe.
+                logger.warning("syntax error desync; restarting kernel")
+                await self._kill()
+                return EvalResult(
+                    output=(
+                        f"{block.strip()}\n\n"
+                        "NOTE: a syntax error left the session input stream "
+                        "unsynchronized, so the session was restarted. All "
+                        "objects defined earlier no longer exist — retry with "
+                        "corrected, self-contained code."
+                    ),
+                    crashed=True,
+                )
+            output = block.strip()
+            if not output:
+                output = "(the code ran successfully and produced no output)"
+            return EvalResult(output=output)
 
     async def reset(self) -> str:
         """Restart the kernel, discarding all session state."""
@@ -600,14 +421,6 @@ class M2ScriptRunner:
                 message = f"{partial}\n\n{message}"
             return ScriptResult(output=message, exit_code=proc.returncode, timed_out=True)
         return ScriptResult(
-            output=_strip_trailing_prompt(stdout.decode("utf-8", errors="replace")),
+            output=stdout.decode("utf-8", errors="replace").strip(),
             exit_code=proc.returncode,
         )
-
-
-def _strip_trailing_prompt(text: str) -> str:
-    """M2 prints a bare ``iN :`` prompt when batch-mode stdin hits EOF.
-
-    It is protocol noise for callers of m2_run_script; drop it.
-    """
-    return re.sub(r"\s*i\d+ :[ \t\r\n]*$", "", text).strip()
