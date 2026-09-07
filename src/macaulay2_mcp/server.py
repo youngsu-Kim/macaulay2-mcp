@@ -44,6 +44,12 @@ Macaulay2 1.26 idioms you will need:
   — ':=' scopes I locally per iteration. Trap: "I_k = ..." defines ONE
   symbol named I_k (underscore is a name character, not indexing); use a
   function instead: I = k -> ideal(...), then call it as I 3.
+* When M2's answer disagrees with a hand-derived invariant (Hilbert series,
+  Euler characteristic, Betti identities), suspect YOUR assumptions before the
+  engine: graded invariants require a HOMOGENEOUS ideal, and many natural
+  examples (x^3 - y, x^4 - z) are not. Consult `m2_help` (offline) — or the
+  Macaulay2 documentation online if your client can fetch web pages — instead
+  of re-deriving from memory, and say plainly which source you consulted.
 * State persists, which means old values haunt new rings: to reuse a name
   that currently holds a value as a plain symbol, reset it first, e.g.
   "a = symbol a" (the official tutorial does this with x).

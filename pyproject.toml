@@ -1,6 +1,6 @@
 [project]
 name = "macaulay2-mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "MCP server for Macaulay2: Groebner bases, resolutions, Betti tables, and more, for Claude Code, opencode, and any MCP client"
 readme = "README.md"
 requires-python = ">=3.10"
