@@ -142,7 +142,7 @@ The server keeps one Macaulay2 kernel alive and sends your code to it, exactly l
 * **Errors inform, they don't decide.** M2 is a REPL: a runtime error does *not* stop the remaining lines from running, and there is no rollback. When that happens, the tool result appends an explicit menu — CONTINUE (fix and resend just the failing statement), RESTART (session reset — irreversible, all definitions lost), or INSPECT (see what survived) — and your assistant is instructed to put those choices to *you*. To prevent the cascade up front, run blocks with `stop_on_error=True`.
 * **Unbalanced input** (e.g. a missing `}`) is rejected up front instead of hanging, and syntax errors that desynchronize the session trigger an automatic restart.
 * **OS-access gate.** M2 functions that run programs, touch the filesystem, reach the network, or kill the kernel (`runProgram`, `lines`, `openOut`, `makeDirectory`, `installPackage`, `quit`, …) are **refused before anything executes** — the session stays untouched and the message explains how the user can enable a specific symbol (`MACAULAY2_MCP_OS_ALLOW=lines,openOut` in the server's environment). The gate is friction against accidents, not a sandbox: M2's `value("...")` string-evaluation is not blocked (blocking it breaks legitimate metaprogramming). For real isolation, run the server in a container/VM.
-* **Audit journal.** Every MCP↔M2 exchange is appended to a JSONL file at `./.m2-mcp/session-<UTC>-<pid>.jsonl` in your project: the code, M2's output, timings, refused gate attempts, and the MCP client (LLM host) that connected. Relocate with `MACAULAY2_MCP_JOURNAL=<dir>`, disable with `=off`. Add `.m2-mcp/` to your `.gitignore` (the server never reads it back in v0.1; checkpoint/replay is planned).
+* **Audit journal.** Every MCP↔M2 exchange is appended to a JSONL file at `./.m2-mcp/session-<UTC>-<pid>.jsonl` in your project: the code, M2's output, timings, refused gate attempts, and the MCP client (LLM host) that connected. Relocate with `MACAULAY2_MCP_JOURNAL=<dir>`, disable with `=off`; for GUI clients a single central location is recommended, e.g. `~/.local/share/macaulay2-mcp/journals`. Add `.m2-mcp/` to your `.gitignore` (the server never reads it back in v0.1; checkpoint/replay is planned).
 * **Security.** This remains a local tool: your assistant can run arbitrary M2 computation on your machine. Both Claude Code and opencode ask for your approval per tool call by default — keep it that way.
 
 ## Design principles
@@ -180,19 +180,19 @@ brew install uv                        # provides /opt/homebrew/bin/uvx
     "macaulay2": {
       "command": "/opt/homebrew/bin/uvx",
       "args": ["macaulay2-mcp"],
-      "env": { "MACAULAY2_MCP_JOURNAL": "/Users/YOURUSERNAME/m2-journals" }
+      "env": { "MACAULAY2_MCP_JOURNAL": "~/.local/share/macaulay2-mcp/journals" }
     }
   }
 }
 ```
 
-[![Add MCP Server macaulay2 to LM Studio](https://files.lmstudio.ai/deeplink/mcp-install-light.svg)](https://lmstudio.ai/install-mcp?name=macaulay2&config=eyJjb21tYW5kIjoiL29wdC9ob21lYnJldy9iaW4vdXZ4IiwiYXJncyI6WyJtYWNhdWxheTItbWNwIl0sImVudiI6eyJNQUNBVUxBWTJfTUNQX0pPVVJOQUwiOiIvVXNlcnMveW91bmdzdS1LaW0vbTItam91cm5hbHMifX0=)
+[![Add MCP Server macaulay2 to LM Studio](https://files.lmstudio.ai/deeplink/mcp-install-light.svg)](https://lmstudio.ai/install-mcp?name=macaulay2&config=eyJjb21tYW5kIjoiL29wdC9ob21lYnJldy9iaW4vdXZ4IiwiYXJncyI6WyJtYWNhdWxheTItbWNwIl0sImVudiI6eyJNQUNBVUxBWTJfTUNQX0pPVVJOQUwiOiJ+Ly5sb2NhbC9zaGFyZS9tYWNhdWxheTItbWNwL2pvdXJuYWxzIn19)
 
 Why the snippet looks different from the CLI ones (each choice is yours to change):
 
 * **Absolute `/opt/homebrew/bin/uvx`** — GUI apps don't inherit your shell's PATH, so a bare `"uvx"` often fails to launch. (If you installed uv via the astral script instead of brew, use `~/.local/bin/uvx`.)
 * **No `M2_BIN` needed** — the server looks for Macaulay2 in the standard Homebrew locations automatically, which is exactly what a minimal GUI PATH requires. Non-standard installs: add `"M2_BIN": "/path/to/M2"` to `env`.
-* **Explicit `MACAULAY2_MCP_JOURNAL`** — GUI-launched servers have an unpredictable working directory, so the journal's default `./.m2-mcp/` would land somewhere mysterious; the snippet pins it to a folder you chose (replace `YOURUSERNAME`). `"MACAULAY2_MCP_JOURNAL": "off"` also works.
+* **Explicit `MACAULAY2_MCP_JOURNAL`** — GUI-launched servers have an unpredictable working directory, so the journal's default `./.m2-mcp/` would land somewhere mysterious; the snippet pins it to `~/.local/share/macaulay2-mcp/journals` (the XDG data standard — the server expands `~` to your home directory, and `rm -rf ~/.local/share/macaulay2-mcp` deletes everything the server ever wrote). `"MACAULAY2_MCP_JOURNAL": "off"` also works.
 
 Then enable the server in the Program tab, pick a **tool-calling-capable** model, and try:
 
