@@ -1,0 +1,6 @@
+Let $S = \mathbb{Q}[x,y,z]$ and $I = (x^3 - y, x^4 - z)$, a monomial space curve.
+(a) Compute the reduced Groebner basis of $I$ and list its elements.
+(b) Compute a minimal free resolution of $S/I$ and display its Betti table.
+(c) State $\dim(S/I)$.
+Do not answer anything you have not seen in a tool output.
+Work on one part at a time: issue a separate m2_evaluate per part, check that the tool output actually printed the result before moving to the next, and if a call printed nothing, fix the command (M2 suppresses a result ending in ";") and rerun rather than answering from memory.

@@ -36,3 +36,10 @@ notes/
 
 # private publishing runbook (kept on disk, stripped from history by filter-repo)
 PUBLISHING.md
+
+# browser-automation artifacts (local debug sessions)
+.playwright-mcp/
+lab-snapshot.yml
+
+# local model-benchmark outputs (CSV/logs are machine-local measurements)
+bench/results/

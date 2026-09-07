@@ -76,10 +76,18 @@ Note: earlier runs (before the server instructions explicitly warned that a
 trailing `;` suppresses a statement's result, and before `task.txt` said to
 use `print betti G`) failed the Betti check 6/6 — the model sent
 `betti G;`, M2 printed nothing, and the model hallucinated the numbers.
-Lesson: for small models, encode M2's display rules in the tool
-instructions, not just in the prompt.
+After the display rules were added to the server's INSTRUCTIONS, the
+same prompt passed on both models instead of failing the Betti check 6/6.
 
 ## LaTeX-prompt reliability (soak, 2026-09-06, macOS Metal, M2 1.26.06)
+
+> **Superseded** (same day): the numbers below understate what
+> local models can do. Two corrections found afterwards — our grader missed
+> M2's bare-value printing (`dim I` -> `o7 : 1`), and a better prompt design
+> (enumerated parts + grounding rule + scaffolding) lets dense 27B models pass
+> 4/6. Current data: [`../bench/README.md`](../bench/README.md). The soak
+> harness itself (task-latex.txt, soak.sh) remains useful for regression checks.
+
 
 49 cycles of `SOAK_HOURS=3 e2e/soak.sh` (1 attempt per cycle), all models
 local via host Ollama:

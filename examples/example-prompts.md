@@ -1,5 +1,7 @@
 # Example prompts and genuine outputs
 
+> Also see [latex-decomposition-test.md](latex-decomposition-test.md) — a self-serve benchmark of LaTeX-style chat prompts (with ground truth and grading rubric).
+
 Every transcript below was captured from a live `macaulay2` MCP session
 (server 0.1.0, Macaulay2 1.26.06). The prompt lines are phrased as you would
 type them to Claude Code / opencode; the code blocks show what the server
