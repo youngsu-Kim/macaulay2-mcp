@@ -46,6 +46,8 @@ M2 syntax helps weak models, LaTeX/plain math usually suffices for strong ones �
 | Macaulay2 (latest stable, 1.26) | `brew install Macaulay2/tap/macaulay2` | `sudo add-apt-repository ppa:macaulay2/macaulay2 && sudo apt install macaulay2` |
 | [uv](https://docs.astral.sh/uv/) (runs the server, no install) | `brew install uv` | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
 
+On macOS the official uv script (`curl -LsSf https://astral.sh/uv/install.sh | sh`, installing to `~/.local/bin`) works equally well — snippets below use plain `uvx`, so either install route is fine.
+
 Both commands add a package repository maintained by the Macaulay2 developers (a Homebrew *tap* / an APT *PPA*) — needed because `macaulay2` is not in Homebrew core and Ubuntu's own package is outdated. Recent Homebrew versions ask to *trust* a third-party tap before installing from it; trust entries live in `~/.homebrew/trust.json` and are reversible at any time: `brew untrust --tap Macaulay2/tap` (drop trust), `brew untap Macaulay2/tap` (remove the tap entirely, after `brew uninstall macaulay2`), or `sudo add-apt-repository --remove ppa:macaulay2/macaulay2` (PPA).
 
 **Then, one line for your client:**
@@ -90,7 +92,7 @@ uvx macaulay2-mcp selftest
 ```
 
 ```text
-macaulay2-mcp 0.1.0 self-test
+macaulay2-mcp 0.1.1 self-test
 
 [OK] found Macaulay2: /opt/homebrew/bin/M2
 [OK] supported version (1.26.x): 1.26.06
@@ -115,6 +117,8 @@ With the server connected, just ask (in Claude Code / opencode / ...). These are
 * “Here is my `mycode.m2` file — import it into the session and call `myFunction`.” (state is kept between calls)
 
 A full genuine transcript of the first prompt: [`examples/groebner-demo.md`](examples/groebner-demo.md).
+
+Want to benchmark your own model the way a real user types math? [`examples/latex-decomposition-test.md`](examples/latex-decomposition-test.md) gives you two ready prompts, a rubric with known-true answers, and what we measured.
 
 ## What the server provides
 
@@ -158,7 +162,7 @@ The server keeps one Macaulay2 kernel alive and sends your code to it, exactly l
 |---|---|
 | macOS (Homebrew) | `brew install Macaulay2/tap/macaulay2` (the tap also exposes `M2` as an alias; `brew trust Macaulay2/tap` first on very recent Homebrew) |
 | Ubuntu (official M2 PPA — always latest) | `sudo add-apt-repository ppa:macaulay2/macaulay2 && sudo apt install macaulay2` |
-| Anything else | <https://macaulay2.com/Downloads/> |
+| Windows | Not supported in v0.1 (macOS and Ubuntu are the tested platforms; WSL2 untested) |
 
 If M2 lives in a non-standard place, set `M2_BIN=/path/to/M2` in the client's environment for the server. The only other settings are `MACAULAY2_MCP_JOURNAL` (journal location / `off`) and `MACAULAY2_MCP_OS_ALLOW` (comma-separated M2 OS-symbols to unblock); v0.1 intentionally has no others.
 
@@ -178,7 +182,7 @@ brew install uv                        # provides /opt/homebrew/bin/uvx
 {
   "mcpServers": {
     "macaulay2": {
-      "command": "/opt/homebrew/bin/uvx",
+      "command": "uvx",
       "args": ["macaulay2-mcp"],
       "env": { "MACAULAY2_MCP_JOURNAL": "~/.local/share/macaulay2-mcp/journals" }
     }
@@ -186,11 +190,13 @@ brew install uv                        # provides /opt/homebrew/bin/uvx
 }
 ```
 
-[![Add MCP Server macaulay2 to LM Studio](https://files.lmstudio.ai/deeplink/mcp-install-light.svg)](https://lmstudio.ai/install-mcp?name=macaulay2&config=eyJjb21tYW5kIjoiL29wdC9ob21lYnJldy9iaW4vdXZ4IiwiYXJncyI6WyJtYWNhdWxheTItbWNwIl0sImVudiI6eyJNQUNBVUxBWTJfTUNQX0pPVVJOQUwiOiJ+Ly5sb2NhbC9zaGFyZS9tYWNhdWxheTItbWNwL2pvdXJuYWxzIn19)
+[![Add MCP Server macaulay2 to LM Studio](https://files.lmstudio.ai/deeplink/mcp-install-light.svg)](lmstudio://add_mcp?name=macaulay2&config=eyJjb21tYW5kIjoidXZ4IiwiYXJncyI6WyJtYWNhdWxheTItbWNwIl0sImVudiI6eyJNQUNBVUxBWTJfTUNQX0pPVVJOQUwiOiJ%2BLy5sb2NhbC9zaGFyZS9tYWNhdWxheTItbWNwL2pvdXJuYWxzIn19)
+
+If nothing happens, your browser did not hand the `lmstudio://` link to the app — copy the JSON snippet above into mcp.json instead. (The `https://lmstudio.ai/install-mcp` redirector that older docs advertise is currently broken client-side.)
 
 Why the snippet looks different from the CLI ones (each choice is yours to change):
 
-* **Absolute `/opt/homebrew/bin/uvx`** — GUI apps don't inherit your shell's PATH, so a bare `"uvx"` often fails to launch. (If you installed uv via the astral script instead of brew, use `~/.local/bin/uvx`.)
+* **`"uvx"` plain** works on current LM Studio (it resolves your shell PATH; same notation your other servers use). If some client fails to launch the server, replace it with the absolute path from `which uvx` — `~/.local/bin/uvx` for the official script install, `/opt/homebrew/bin/uvx` for brew.
 * **No `M2_BIN` needed** — the server looks for Macaulay2 in the standard Homebrew locations automatically, which is exactly what a minimal GUI PATH requires. Non-standard installs: add `"M2_BIN": "/path/to/M2"` to `env`.
 * **Explicit `MACAULAY2_MCP_JOURNAL`** — GUI-launched servers have an unpredictable working directory, so the journal's default `./.m2-mcp/` would land somewhere mysterious; the snippet pins it to `~/.local/share/macaulay2-mcp/journals` (the XDG data standard — the server expands `~` to your home directory, and `rm -rf ~/.local/share/macaulay2-mcp` deletes everything the server ever wrote). `"MACAULAY2_MCP_JOURNAL": "off"` also works.
 
@@ -198,9 +204,9 @@ Then enable the server in the Program tab, pick a **tool-calling-capable** model
 
 > Compute a Groebner basis of the ideal $I = (x^3 - y, x^4 - z)$ in $\mathbb{Q}[x,y,z]$ and print its elements.
 
-You should see a `m2_evaluate` tool call in the chat's tool activity, then the basis. Honest caveat measured in our own Docker E2E: small local models vary a lot at tool calling and at transcribing tables — the server's built-in instructions, error menus, and output journal (LM Studio shows up there as the connected client) are designed to help weaker models, not rescue every case. If a computation is refused by the OS gate, the same `MACAULAY2_MCP_OS_ALLOW` env applies here.
+You should see a `m2_evaluate` tool call in the chat's tool activity, then the basis. Measured in our E2E and bench runs: small local models vary a lot at tool calling and at transcribing tables. The server provides built-in M2 idioms, error menus, and an auditable journal (LM Studio appears there as the connected client); these assist weaker models but do not make every model complete every task. If a computation is refused by the OS gate, the same `MACAULAY2_MCP_OS_ALLOW` env applies here.
 
-> The install button and every `uvx macaulay2-mcp` command go live when the package is published to PyPI (v0.1.0); until then, from a checkout you can point the `command` at `uv` with `--directory /path/to/m2_mcp_project` and `["run", "macaulay2-mcp"]` as a preview.
+> The install button and every `uvx macaulay2-mcp` command go live when the package is published to PyPI; until then, from a checkout you can point the `command` at `uv` with `--directory /path/to/m2_mcp_project` and `["run", "macaulay2-mcp"]` as a preview.
 
 ## Try it in your browser (no install)
 
@@ -219,7 +225,8 @@ The companion repo [`m2-mcp-binder`](https://github.com/youngsu-Kim/macaulay2-mc
 | Something about an unbalanced `}` | Your (or the assistant's) code was missing a closing bracket — the error message says so; just fix and resend. |
 | A `.m2-mcp/` folder appeared in your project | That is the audit journal (every M2 exchange, one JSONL file per server run). Add it to `.gitignore`, relocate with `MACAULAY2_MCP_JOURNAL=<dir>`, or disable with `MACAULAY2_MCP_JOURNAL=off`. |
 | `BLOCKED: ... gatekeeper refuses '...'` | The assistant tried an M2 function that touches the OS (process/file/network). Nothing ran. If you trust the code, set `MACAULAY2_MCP_OS_ALLOW=<symbol>,<symbol>` in the server's environment and restart the client. |
-| Server won't start in a GUI app (LM Studio, Claude Desktop) | GUI apps get a minimal PATH — use the **absolute** path to `uvx` (`which uvx` in a terminal) in the `command` field. For LM Studio you can watch the server's log in the Program tab's server detail view. |
+| Server won't start in a GUI app (LM Studio, Claude Desktop) | try plain `uvx` first (recent versions resolve your shell PATH); if it won't start, put the absolute path from `which uvx` in the `command` field. For LM Studio you can watch the server's log in the Program tab's server detail view. |
+| Running on Windows | v0.1 supports macOS and Ubuntu only; Windows is untested and unsupported. Open an issue if you need it — demand shapes the roadmap. |
 
 ## Todos/Plans
 
