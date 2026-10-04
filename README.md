@@ -146,7 +146,7 @@ The server keeps one Macaulay2 kernel alive and sends your code to it, exactly l
 * **Errors inform, they don't decide.** M2 is a REPL: a runtime error does *not* stop the remaining lines from running, and there is no rollback. When that happens, the tool result appends an explicit menu — CONTINUE (fix and resend just the failing statement), RESTART (session reset — irreversible, all definitions lost), or INSPECT (see what survived) — and your assistant is instructed to put those choices to *you*. To prevent the cascade up front, run blocks with `stop_on_error=True`.
 * **Unbalanced input** (e.g. a missing `}`) is rejected up front instead of hanging, and syntax errors that desynchronize the session trigger an automatic restart.
 * **OS-access gate.** M2 functions that run programs, touch the filesystem, reach the network, or kill the kernel (`runProgram`, `lines`, `openOut`, `makeDirectory`, `installPackage`, `quit`, …) are **refused before anything executes** — the session stays untouched and the message explains how the user can enable a specific symbol (`MACAULAY2_MCP_OS_ALLOW=lines,openOut` in the server's environment). The gate is friction against accidents, not a sandbox: M2's `value("...")` string-evaluation is not blocked (blocking it breaks legitimate metaprogramming). For real isolation, run the server in a container/VM.
-* **Audit journal.** Every MCP↔M2 exchange is appended to a JSONL file at `./.m2-mcp/session-<UTC>-<pid>.jsonl` in your project: the code, M2's output, timings, refused gate attempts, and the MCP client (LLM host) that connected. Relocate with `MACAULAY2_MCP_JOURNAL=<dir>`, disable with `=off`; for GUI clients a single central location is recommended, e.g. `~/.local/share/macaulay2-mcp/journals`. Add `.m2-mcp/` to your `.gitignore` (the server never reads it back in v0.1; checkpoint/replay is planned).
+* **Audit journal.** Every MCP↔M2 exchange is appended to a JSONL file at `./.m2-mcp/session-<UTC>-<pid>.jsonl` in your project: the code, M2's output, timings, refused gate attempts, and the MCP client (LLM host) that connected. Relocate with `MACAULAY2_MCP_JOURNAL=<dir>`, disable with `=off`; for GUI clients a single central location is recommended, e.g. `~/.local/share/macaulay2-mcp/journals`. Add `.m2-mcp/` to your `.gitignore` (the server never reads it back in v0.1; checkpoint/replay is planned). See *Reading the journal* below.
 * **Long results are excerpted.** A tool result past ~120 lines / 32 KB comes back as its first 100 and last 10 lines with a notice naming where the full text was saved (the journal); nothing is silently lost, and chats stay readable. Prefer narrowing in M2 (`take`, `drop`, smaller examples) over dumping huge results.
 * **Security.** This remains a local tool: your assistant can run arbitrary M2 computation on your machine. Both Claude Code and opencode ask for your approval per tool call by default — keep it that way.
 
@@ -175,6 +175,44 @@ cubic surface) is refused too. Nothing runs in either case; rename the
 variable, or allowlist the symbol via `MACAULAY2_MCP_OS_ALLOW`. The gate
 remains friction against accidents, not a sandbox — for real isolation run
 the server in a container or VM.
+
+### Reading the journal
+
+As a default, the MCP server keeps the history (journal) in a file — an
+append-only log of every exchange: one JSON Lines file per server run, one
+JSON object per line. It lands in `.m2-mcp/` in the working directory of the
+app that started the server; relocate it with `MACAULAY2_MCP_JOURNAL=<dir>`
+or turn it off with `=off` (the LM Studio guide, for instance, points it at
+`~/.local/share/macaulay2-mcp/journals/`).
+
+Why it exists: when an AI assistant computes on your behalf, "what exactly
+ran, and what came back?" deserves an answer that outlives the chat
+scrollback. Each record carries the exact code, M2's full output (fields cap
+at 1 MiB), outcome flags (timeout / error / interrupted / stopped), elapsed
+time, and which M2 served it; the first line of every file is a header with
+the server version and the identity of the connected client. Gate refusals
+are recorded too — the code that was *not* executed. When a long result is
+excerpted, the notice's "event seq N" points at the record here that holds
+the full text.
+
+Quick looks:
+
+```sh
+# one line per call, newest dir last:
+jq -c '{seq, event, code}' .m2-mcp/session-*.jsonl
+
+# everything the gate refused:
+jq 'select(.event == "os_block") | {t, symbols, code}' .m2-mcp/session-*.jsonl
+```
+
+Honest notes: the journal is plain text — nothing redacted, so treat the
+folder like your browser history and keep it out of version control
+(`.m2-mcp/` in `.gitignore`). The server never reads it back in v0.1
+(checkpoint/replay is planned). Deleting files is safe and reversible in the
+only sense that matters: the next server run simply starts a new file. The
+conversation around these calls lives in your *client's* own storage (e.g.
+opencode's session history); the two records agree by timestamp, which is
+deliberate.
 
 ## Design principles
 
