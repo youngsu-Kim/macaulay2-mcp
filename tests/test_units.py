@@ -4,9 +4,13 @@
 from macaulay2_mcp.config import DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S, _parse_version, clamp_timeout
 from macaulay2_mcp.gatekeep import rejection_message
 from macaulay2_mcp.journal import Journal
-from macaulay2_mcp.kernel import _strip_trailing_prompt
+from macaulay2_mcp.kernel import (
+    _strip_trailing_prompt,
+    parse_ps_rss,
+    parse_vmrss,
+)
 from macaulay2_mcp.scanner import mask
-from macaulay2_mcp.server import _clip_output, _escape_m2_string, _human_size
+from macaulay2_mcp.server import _clip_output, _escape_m2_string, _human_duration, _human_size
 
 # ------------------------------------------------------------------ config
 
@@ -38,6 +42,30 @@ def test_strip_trailing_prompt():
     assert _strip_trailing_prompt("out line\ni12 : \n") == "out line"
     assert _strip_trailing_prompt("a\n\ni3 :") == "a"
     assert _strip_trailing_prompt("plain") == "plain"
+
+
+def test_parse_vmrss():
+    status = (
+        "Name:\tM2\nState:\tS (sleeping)\nVmPeak:\t  999999 kB\n"
+        "VmRSS:\t   98765 kB\nVmSize:\t 999999 kB\n"
+    )
+    assert parse_vmrss(status) == 98765
+    assert parse_vmrss("Name:\tM2\n") is None  # kernel not resident (odd)
+    assert parse_vmrss("VmRSS:\tabc kB\n") is None  # never trust the format
+    assert parse_vmrss("XVmRSS:\t5 kB\n") is None  # anchored at line start
+
+
+def test_parse_ps_rss():
+    assert parse_ps_rss(" 12345\n") == 12345
+    assert parse_ps_rss("") is None
+    assert parse_ps_rss("ps: unknown process\n") is None
+
+
+def test_human_duration():
+    assert _human_duration(47.9) == "47s"
+    assert _human_duration(192) == "3m 12s"
+    assert _human_duration(3723) == "1h 02m"
+    assert _human_duration(None) == "unknown"
 
 
 # ---------------------------------------------------------------- scanner

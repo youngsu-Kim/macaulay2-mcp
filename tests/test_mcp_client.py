@@ -15,6 +15,7 @@ SERVER_ENV = {**get_default_environment(), "MACAULAY2_MCP_JOURNAL": "off"}
 EXPECTED_TOOLS = {
     "m2_evaluate",
     "m2_interrupt",
+    "m2_memory",
     "m2_session_reset",
     "m2_help",
     "m2_run_script",
@@ -42,7 +43,7 @@ async def _with_server(fn):
         return await fn(session)
 
 
-async def test_lists_seven_tools():
+async def test_lists_all_tools():
     async def get(session: ClientSession):
         tools = await session.list_tools()
         return {t.name for t in tools.tools}
@@ -120,6 +121,40 @@ async def test_long_output_excerpted_and_full_text_in_journal(tmp_path):
     assert record["event"] == "evaluate"
     assert record["output"].count("0") > 290_000  # full 300 KB text journaled
     assert f"event seq {record['seq']}" in text
+
+
+async def test_memory_footnote_suppressible_and_journaled(tmp_path):
+    """Default: every m2_evaluate ends with an RSS line. show_memory=False:
+    line gone, but the journal still carries rss_bytes. m2_memory() answers."""
+    import json
+
+    env = {**get_default_environment(), "MACAULAY2_MCP_JOURNAL": str(tmp_path)}
+    params = StdioServerParameters(command=sys.executable, args=["-m", "macaulay2_mcp"], env=env)
+    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        await session.call_tool("m2_evaluate", {"code": "1 + 1"})  # start the kernel
+        r_default = await session.call_tool("m2_evaluate", {"code": "2 + 2"})
+        r_quiet = await session.call_tool("m2_evaluate", {"code": "3 + 3", "show_memory": False})
+        r_mem = await session.call_tool("m2_memory", {})
+
+    default_text = r_default.content[0].text.rstrip()
+    assert default_text.endswith("resident)")
+    assert "(M2 memory: " in default_text
+    assert "M2 memory" not in r_quiet.content[0].text
+    mem = r_mem.content[0].text
+    assert "M2 kernel memory:" in mem and "pid " in mem and "uptime " in mem
+
+    files = list(tmp_path.glob("session-*.jsonl"))
+    assert len(files) == 1
+    events = [json.loads(line) for line in files[0].read_text().splitlines()]
+    evaluations = [e for e in events if e.get("event") == "evaluate"]
+    assert len(evaluations) == 3
+    for e in evaluations:  # journaled regardless of the per-call flag
+        assert isinstance(e["rss_bytes"], int) and e["rss_bytes"] > 0
+        assert evaluations[0]["show_memory"] is True  # 1 + 1 (default)
+        assert evaluations[1]["show_memory"] is True  # 2 + 2 (default)
+        assert evaluations[2]["show_memory"] is False  # 3 + 3 (suppressed)
+    assert any(e.get("event") == "memory" and e.get("rss_bytes", 0) > 0 for e in events)
 
 
 async def test_load_preloaded_package_reports_already_loaded():

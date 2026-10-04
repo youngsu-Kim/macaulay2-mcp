@@ -51,6 +51,8 @@ import asyncio
 import logging
 import re
 import signal
+import sys
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -84,6 +86,10 @@ MAX_BLOCK_BYTES = 32 * 1024 * 1024
 # marker echo to drain from the stream before the session is killed and
 # restarted to resynchronize.
 RESYNC_TIMEOUT_S = 30
+
+# How long the macOS/other-platform ``ps`` subprocess (the RSS probe, see
+# M2Session.rss_bytes) may take before we give up and report "unknown".
+RSS_PS_TIMEOUT_S = 5
 
 
 # A line that is exactly a bare prompt (``iN :``). M2 emits these when it
@@ -183,9 +189,28 @@ def split_logical_inputs(code: str) -> list[str]:
     return chunks
 
 
+def parse_vmrss(status_text: str) -> int | None:
+    """Extract VmRSS (in KiB) from /proc/<pid>/status text; None if absent.
+
+    Pure helper for :meth:`M2Session.rss_bytes` on Linux; unit-testable.
+    """
+    m = re.search(r"^VmRSS:[ \t]+(\d+)[ \t]*kB", status_text, re.MULTILINE)
+    return int(m.group(1)) if m else None
+
+
+def parse_ps_rss(stdout_text: str) -> int | None:
+    """Extract RSS (in KiB) from ``ps -o rss=`` output; None if unparsable.
+
+    Pure helper for :meth:`M2Session.rss_bytes` on non-Linux platforms.
+    """
+    token = stdout_text.strip()
+    return int(token) if token.isdigit() else None
+
+
 @dataclass
 class EvalResult:
     output: str
+    rss_bytes: int | None = None  # kernel RSS sampled while it was alive
     timed_out: bool = False
     crashed: bool = False
     interrupted: bool = False
@@ -255,6 +280,9 @@ class M2Session:
         self._lock = asyncio.Lock()
         self._config_error: str | None = None
         self._busy = False
+        # monotonic clock of the current kernel's successful start (None
+        # while no kernel runs); backs uptime_s() for the memory report.
+        self._started_at: float | None = None
 
     # ------------------------------------------------------------------ setup
 
@@ -276,6 +304,71 @@ class M2Session:
             return False
         logger.info("sent SIGINT to the M2 kernel")
         return True
+
+    @property
+    def pid(self) -> int | None:
+        """OS pid of the live kernel, or None if it is not running."""
+        if self._proc is None or self._proc.returncode is not None:
+            return None
+        return self._proc.pid
+
+    def uptime_s(self) -> float | None:
+        """Seconds since the current kernel started (None if not running)."""
+        if self._started_at is None:
+            return None
+        return time.monotonic() - self._started_at
+
+    async def rss_bytes(self) -> int | None:
+        """Resident set size of the M2 kernel in bytes; None if unavailable.
+
+        Reads OS bookkeeping for OUR OWN child process — unprivileged on
+        macOS and Linux, and never touches the input stream, so (like
+        :meth:`interrupt`) it is lock-free and safe while a computation runs.
+        Linux: ``/proc/<pid>/status`` VmRSS (KiB). Elsewhere: ``ps -o rss=``
+        (KiB; the probe is bounded by ``RSS_PS_TIMEOUT_S``). Note RSS is the
+        process footprint: M2's engine rarely returns freed pages to the OS,
+        so it approximates a high-water mark. Never raises.
+        """
+        pid = self.pid
+        if pid is None:
+            return None
+        kib: int | None = None
+        try:
+            if sys.platform.startswith("linux"):
+                text = Path(f"/proc/{pid}/status").read_text(errors="replace")
+                kib = parse_vmrss(text)
+            else:
+                # stderr discarded, stdout piped: our own stdout carries the
+                # JSON-RPC protocol and must stay untouched (stdout rule).
+                proc = await asyncio.create_subprocess_exec(
+                    "ps",
+                    "-o",
+                    "rss=",
+                    "-p",
+                    str(pid),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                out, _ = await asyncio.wait_for(
+                    proc.communicate(), timeout=RSS_PS_TIMEOUT_S
+                )
+                if proc.returncode == 0:
+                    kib = parse_ps_rss(out.decode("utf-8", errors="replace"))
+        except Exception:  # pragma: no cover - defensive: probe never breaks a call
+            logger.debug("RSS probe failed for pid %s", pid, exc_info=True)
+            return None
+        return kib * 1024 if kib is not None else None
+
+    async def _with_rss(self, result: EvalResult) -> EvalResult:
+        """Stamp ``result.rss_bytes`` (sampled NOW, while the kernel lives).
+
+        Callers on paths that KILL the kernel (timeout, syntax-desync
+        restart) must sample through this BEFORE :meth:`_kill`, or the
+        measurement — the one that matters most — is lost.
+        """
+        if result.rss_bytes is None:
+            result.rss_bytes = await self.rss_bytes()
+        return result
 
     def _ensure_config(self) -> M2Config:
         """Resolve (and cache) the M2 binary + version gate.
@@ -325,6 +418,7 @@ class M2Session:
             raise M2StartupError(
                 "Macaulay2 started but did not respond to the startup probe."
             ) from exc
+        self._started_at = time.monotonic()
 
     async def _kill(self) -> None:
         """SIGKILL the coprocess (if any) and reset ALL stream state.
@@ -333,6 +427,7 @@ class M2Session:
         :meth:`reset`, :meth:`close`, and the resync fallback.
         """
         proc, self._proc = self._proc, None
+        self._started_at = None
         self._linebuf.clear()
         self._pending_marker = None
         if proc is not None and proc.returncode is None:
@@ -559,8 +654,13 @@ class M2Session:
             raise
         except asyncio.TimeoutError:
             logger.warning("evaluation timed out after %ds; restarting kernel", timeout_s)
+            # stamp BEFORE the kill: the peak-ish footprint of the job that
+            # just died is the measurement a timeout report exists to give.
+            timed = await self._with_rss(
+                EvalResult(output=_session_timeout_message(timeout_s), timed_out=True)
+            )
             await self._kill()
-            return None, EvalResult(output=_session_timeout_message(timeout_s), timed_out=True)
+            return None, timed
         except KernelCrashed as exc:
             logger.warning("kernel crashed: %s; restarting", exc)
             await self._kill()
@@ -593,18 +693,21 @@ class M2Session:
             # An unbalanced syntax error may have swallowed the marker and
             # desynchronized the input stream; restart to be safe.
             logger.warning("syntax error desync; restarting kernel")
-            await self._kill()
-            return EvalResult(
-                output=(
-                    f"{block.strip()}\n\n"
-                    "NOTE: a syntax error left the session input stream "
-                    "unsynchronized, so the session was restarted. All "
-                    "objects defined earlier no longer exist — retry with "
-                    "corrected, self-contained code."
-                ),
-                crashed=True,
-                errored=True,
+            result = await self._with_rss(
+                EvalResult(
+                    output=(
+                        f"{block.strip()}\n\n"
+                        "NOTE: a syntax error left the session input stream "
+                        "unsynchronized, so the session was restarted. All "
+                        "objects defined earlier no longer exist — retry with "
+                        "corrected, self-contained code."
+                    ),
+                    crashed=True,
+                    errored=True,
+                )
             )
+            await self._kill()
+            return result
         output = block.strip()
         if not output:
             output = "(the code ran successfully and produced no output)"
@@ -618,10 +721,12 @@ class M2Session:
                 "completed before the interrupted one is still available; "
                 "the session is ready for new input."
             )
-        return EvalResult(
-            output=output,
-            interrupted=interrupted,
-            errored=contains_m2_error(block) and not interrupted,
+        return await self._with_rss(
+            EvalResult(
+                output=output,
+                interrupted=interrupted,
+                errored=contains_m2_error(block) and not interrupted,
+            )
         )
 
     async def _evaluate_whole(self, code: str, timeout_s: int) -> EvalResult:
@@ -666,17 +771,19 @@ class M2Session:
             if contains_m2_error(block):
                 interrupted = "error: interrupted" in block
                 text = "\n\n".join(collected) if collected else "(no output before the error)"
-                return EvalResult(
-                    output=text,
-                    errored=True,
-                    stopped=True,
-                    interrupted=interrupted,
-                    not_sent=remaining,
+                return await self._with_rss(
+                    EvalResult(
+                        output=text,
+                        errored=True,
+                        stopped=True,
+                        interrupted=interrupted,
+                        not_sent=remaining,
+                    )
                 )
         text = "\n\n".join(collected).strip()
         if not text:
             text = "(the code ran successfully and produced no output)"
-        return EvalResult(output=text)
+        return await self._with_rss(EvalResult(output=text))
 
     async def reset(self) -> str:
         """Restart the kernel, discarding all session state."""

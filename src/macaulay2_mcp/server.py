@@ -75,6 +75,13 @@ journal file and its event seq; when the journal is off, nothing is stored).
 Prefer narrowing in M2 (take/drop, smaller examples) over dumping huge
 results into the chat.
 
+Memory: every m2_evaluate result ends with a line giving the M2 kernel's resident
+memory (RSS); pass show_memory=False to omit that line. RSS reads as a high-water
+mark because M2 rarely returns freed pages to the OS. The journal records rss_bytes
+for every evaluation regardless of the flag, and m2_memory() reports pid, uptime and
+current RSS on demand (a kernel killed by a timeout is sampled just before restart,
+so its last measurement survives).
+
 Stopping: if the user wants to cancel a still-running computation, call
 m2_interrupt — M2 aborts the current input at a safe checkpoint, the running
 m2_evaluate returns with "error: interrupted", and all earlier definitions
@@ -143,6 +150,18 @@ def _human_size(num: int) -> str:
             return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
         size /= 1024.0
     return f"{size:.1f} GB"  # unreachable
+
+
+def _human_duration(seconds: float | None) -> str:
+    """Format an uptime span for humans: "47s", "3m 12s", "1h 02m"."""
+    if seconds is None:
+        return "unknown"
+    s = int(seconds)
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m {s % 60:02d}s"
+    return f"{s // 3600}h {(s % 3600) // 60:02d}m"
 
 
 def _byte_cut(text: str, limit: int) -> str:
@@ -285,6 +304,7 @@ def build_server() -> MCPServer:
         code: str,
         timeout_s: int = DEFAULT_TIMEOUT_S,
         stop_on_error: bool = False,
+        show_memory: bool = True,
         ctx: Context = None,
     ) -> str:
         """Evaluate Macaulay2 code in the persistent session and return its output.
@@ -307,10 +327,13 @@ def build_server() -> MCPServer:
                 input and halts at the first error, leaving later inputs
                 unexecuted. Requires each line to be a self-contained
                 statement (do not break a line after a binary operator).
+            show_memory: True (default) appends one line naming the kernel's
+                resident memory (RSS) to the result; False omits it. The
+                value is recorded in the journal either way.
         """
         # Roadmap: raise the max timeout (1 hr / 3600s) to a higher number in
-        # a future version; this should come after having a memory monitoring
-        # feature.
+        # a future version — the precondition (memory monitoring: RSS per
+        # evaluation in the journal, m2_memory) is now met; see notes/roadmap.md.
         blocked = find_blocked_calls(code)
         if blocked:
             journal.set_client_info(_client_info(ctx))
@@ -327,12 +350,16 @@ def build_server() -> MCPServer:
             )
         elif result.not_sent and not result.crashed:
             text += f"\n\n(stop_on_error: {result.not_sent} later input(s) were not executed.)"
+        if show_memory and result.rss_bytes is not None:
+            text += f"\n\n(M2 memory: {_human_size(result.rss_bytes)} resident)"
         journal.set_client_info(_client_info(ctx))
         seq = journal.record(
             "evaluate",
             code=code,
             timeout_s=timeout_s,
             stop_on_error=stop_on_error,
+            show_memory=show_memory,
+            rss_bytes=result.rss_bytes,
             elapsed_ms=int((time.perf_counter() - t0) * 1000),
             timed_out=result.timed_out,
             crashed=result.crashed,
@@ -372,6 +399,48 @@ def build_server() -> MCPServer:
                 "definitions."
             )
         return "Nothing is running in the Macaulay2 session; nothing to interrupt."
+
+    @server.tool()
+    async def m2_memory(ctx: Context = None) -> str:
+        """Report the persistent Macaulay2 kernel's memory usage (RSS), pid, uptime.
+
+        Reads the operating system's resident-set size of the kernel child
+        process (VmRSS on Linux, ps on macOS) — an unprivileged read of our
+        own child; nothing is sent to M2 and the session is untouched. RSS
+        approximates a high-water mark: M2 rarely returns freed pages to the
+        OS, so a number here stays up even after smaller computations.
+        """
+        t0 = time.perf_counter()
+        pid = session.pid
+        rss = await session.rss_bytes()
+        uptime = session.uptime_s()
+        if pid is None:
+            out = (
+                "M2 kernel: not running, so memory usage is unknown — a fresh "
+                "kernel starts lazily with the next evaluation "
+                f"(session: {session.describe()})."
+            )
+        elif rss is None:
+            out = (
+                f"pid {pid} is running but its RSS could not be read on this "
+                f"system; uptime {_human_duration(uptime)} "
+                f"(session: {session.describe()})."
+            )
+        else:
+            out = (
+                f"M2 kernel memory: {_human_size(rss)} resident ({rss} bytes)\n"
+                f"pid {pid}, uptime {_human_duration(uptime)}\n"
+                f"Session: {session.describe()}"
+            )
+        journal.set_client_info(_client_info(ctx))
+        journal.record(
+            "memory",
+            rss_bytes=rss,
+            pid=pid,
+            uptime_s=round(uptime, 1) if uptime is not None else None,
+            elapsed_ms=int((time.perf_counter() - t0) * 1000),
+        )
+        return out
 
     @server.tool()
     async def m2_session_reset(ctx: Context = None) -> str:

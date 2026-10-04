@@ -122,12 +122,13 @@ Want to benchmark your own model the way a real user types math? [`examples/late
 
 ## What the server provides
 
-Eight tools, one shared M2 session:
+Nine tools, one shared M2 session:
 
 | Tool | What it does |
 |---|---|
-| `m2_evaluate(code, timeout_s?, stop_on_error?)` | Evaluate M2 code in the persistent session. State carries over between calls; `stop_on_error=True` halts at the first error instead of running the rest. |
+| `m2_evaluate(code, timeout_s?, stop_on_error?, show_memory?)` | Evaluate M2 code in the persistent session. State carries over between calls; `stop_on_error=True` halts at the first error instead of running the rest. Results end with a kernel-memory (RSS) line unless `show_memory=False`. |
 | `m2_interrupt()` | Stop a running computation: M2 aborts at a safe checkpoint and **keeps** all earlier definitions (unlike a timeout, which restarts the kernel). |
+| `m2_memory()` | Report the kernel's resident memory (RSS), pid, and uptime — an unprivileged OS read of the server's own child process. |
 | `m2_session_reset()` | Restart the kernel — a clean slate. |
 | `m2_help(topic)` | M2 documentation lookup (`help "topic"`). |
 | `m2_run_script(path, timeout_s?)` | Run a `.m2` file in a fresh, isolated M2 process (batch mode; use `print` for output). |
@@ -148,6 +149,7 @@ The server keeps one Macaulay2 kernel alive and sends your code to it, exactly l
 * **OS-access gate.** M2 functions that run programs, touch the filesystem, reach the network, or kill the kernel (`runProgram`, `lines`, `openOut`, `makeDirectory`, `installPackage`, `quit`, …) are **refused before anything executes** — the session stays untouched and the message explains how the user can enable a specific symbol (`MACAULAY2_MCP_OS_ALLOW=lines,openOut` in the server's environment). The gate is friction against accidents, not a sandbox: M2's `value("...")` string-evaluation is not blocked (blocking it breaks legitimate metaprogramming). For real isolation, run the server in a container/VM.
 * **Audit journal.** Every MCP↔M2 exchange is appended to a JSONL file at `./.m2-mcp/session-<UTC>-<pid>.jsonl` in your project: the code, M2's output, timings, refused gate attempts, and the MCP client (LLM host) that connected. Relocate with `MACAULAY2_MCP_JOURNAL=<dir>`, disable with `=off`; for GUI clients a single central location is recommended, e.g. `~/.local/share/macaulay2-mcp/journals`. Add `.m2-mcp/` to your `.gitignore` (the server never reads it back in v0.1; checkpoint/replay is planned). See *Reading the journal* below.
 * **Long results are excerpted.** A tool result past ~120 lines / 32 KB comes back as its first 100 and last 10 lines with a notice naming where the full text was saved (the journal); nothing is silently lost, and chats stay readable. Prefer narrowing in M2 (`take`, `drop`, smaller examples) over dumping huge results.
+* **Memory reporting.** Every `m2_evaluate` result ends with the kernel's resident memory (RSS) — pass `show_memory=False` to omit that line — and `m2_memory()` answers on demand (pid, uptime, RSS). The journal records `rss_bytes` per evaluation regardless of the flag, and a kernel killed by a timeout is sampled just before the restart, so its last measurement survives. RSS is the OS-level footprint of the M2 process; it reads as a high-water mark because M2 rarely returns freed pages to the OS.
 * **Security.** This remains a local tool: your assistant can run arbitrary M2 computation on your machine. Both Claude Code and opencode ask for your approval per tool call by default — keep it that way.
 
 ### The OS-access gate
@@ -189,7 +191,8 @@ Why it exists: when an AI assistant computes on your behalf, "what exactly
 ran, and what came back?" deserves an answer that outlives the chat
 scrollback. Each record carries the exact code, M2's full output (fields cap
 at 1 MiB), outcome flags (timeout / error / interrupted / stopped), elapsed
-time, and which M2 served it; the first line of every file is a header with
+time, the kernel's resident memory (`rss_bytes`), and which M2 served it; the
+first line of every file is a header with
 the server version and the identity of the connected client. Gate refusals
 are recorded too — the code that was *not* executed. When a long result is
 excerpted, the notice's "event seq N" points at the record here that holds

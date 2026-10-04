@@ -122,6 +122,19 @@ async def test_timeout_kills_and_restarts(session):
     assert "2" in fresh.output
 
 
+async def test_evaluate_stamps_rss(session):
+    result = await session.evaluate("1 + 1")
+    assert isinstance(result.rss_bytes, int) and result.rss_bytes > 0
+
+
+async def test_timeout_stamps_rss_before_restart(session):
+    # the measurement that matters most must survive the kill: the kernel is
+    # sampled while alive, so the timed-out result still carries its footprint
+    result = await session.evaluate("while true do()", timeout_s=3)
+    assert result.timed_out
+    assert isinstance(result.rss_bytes, int) and result.rss_bytes > 0
+
+
 async def test_interrupt_stops_runaway_and_preserves_state(session):
     await session.evaluate("keepAfterInterrupt = 99")
     task = asyncio.create_task(session.evaluate("while true do()", timeout_s=30))

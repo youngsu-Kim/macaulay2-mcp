@@ -117,7 +117,7 @@ src/macaulay2_mcp/
   kernel.py    M2Session (persistent kernel), M2ScriptRunner (batch), messages
   gatekeep.py  OS-call blocklist + rejection messages (mask-based matching)
   journal.py   JSONL audit journal (lazy header w/ clientInfo, never raises)
-  server.py    the 8 MCP tools + INSTRUCTIONS (LLM-facing, keep accurate)
+  server.py    the 9 MCP tools + INSTRUCTIONS (LLM-facing, keep accurate)
   cli.py       entry point: server mode | selftest | --version
 tests/
   test_kernel.py     protocol tests (skip if M2 1.26 missing)
