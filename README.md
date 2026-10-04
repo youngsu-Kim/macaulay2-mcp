@@ -152,6 +152,16 @@ The server keeps one Macaulay2 kernel alive and sends your code to it, exactly l
 * **Memory reporting.** Every `m2_evaluate` result ends with the kernel's resident memory and its peak — pass `show_memory=False` to omit that line — and `m2_memory()` answers on demand, *including while a long computation is running* (a cheap watchdog: watch, then decide whether `m2_interrupt` is worthwhile). When the kernel starts paging to swap, the line names the swap amount and a note lays out the options; nothing is ever killed automatically. The journal records `rss_bytes`, `peak_rss_bytes` and `swap_bytes` per evaluation regardless of the flag, and a kernel killed by a timeout is probed just before the restart, so its last measurement survives. Peak uses kernel-tracked counters (`VmHWM` on Linux; `footprint`'s `phys_footprint_peak` on macOS), not sampling; swap is per-process on Linux, and the system-wide growth since the kernel started on macOS (Apple exposes no unprivileged per-process swap counter).
 * **Security.** This remains a local tool: your assistant can run arbitrary M2 computation on your machine. Both Claude Code and opencode ask for your approval per tool call by default — keep it that way.
 
+### Tested environments
+
+Behaviour (including the golden outputs) is pinned against Macaulay2 1.26 on:
+
+| Environment | Machine | Memory relevant to the swap guidance |
+|---|---|---|
+| Development | Apple-silicon Mac, macOS 27 | — |
+| CI | GitHub Actions ubuntu-latest | 16 GB |
+| e2e / Binder demo | Container / hosted VM | Low single-digit GB, host-dependent |
+
 ### The OS-access gate
 
 Why some perfectly normal-looking code is **blocked**: your assistant drives the
