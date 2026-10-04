@@ -219,6 +219,9 @@ def build_server() -> MCPServer:
                 unexecuted. Requires each line to be a self-contained
                 statement (do not break a line after a binary operator).
         """
+        # Roadmap: raise the max timeout (1 hr / 3600s) to a higher number in
+        # a future version; this should come after having a memory monitoring
+        # feature.
         blocked = find_blocked_calls(code)
         if blocked:
             journal.set_client_info(_client_info(ctx))
@@ -302,6 +305,8 @@ def build_server() -> MCPServer:
             topic: Documentation entry point, e.g. "groebnerBasis",
                 "resolution", "HilbertPolynomial", "Package".
         """
+        # In the future, we should add 1) code showing and
+        # 2) web search as well
         safe = _escape_m2_string(topic.strip())
         result = await session.evaluate(f'help "{safe}"', timeout_s=60)
         journal.set_client_info(_client_info(ctx))
@@ -411,6 +416,8 @@ def build_server() -> MCPServer:
         Args:
             path: ABSOLUTE path to the .m2 file to import.
         """
+        # This feature is similar to buffer pushing in Emacs. We should
+        # add this to the description
         file = Path(path)
         if not file.is_absolute():
             return f"ERROR: path must be absolute, got {path!r}."

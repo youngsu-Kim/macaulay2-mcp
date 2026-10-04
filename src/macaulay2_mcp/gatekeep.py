@@ -104,7 +104,7 @@ def allowed_symbols() -> frozenset[str]:
     raw = os.environ.get(_ALLOW_ENV, "")
     return frozenset(tok.strip() for tok in raw.split(",") if tok.strip())
 
-
+# We need to add a unit test
 def find_blocked_calls(code: str) -> list[str]:
     """Return blocked OS-symbol mentions in ``code`` (sorted, unique).
 

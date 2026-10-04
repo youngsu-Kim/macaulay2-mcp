@@ -90,6 +90,15 @@ uv run macaulay2-mcp         # run the MCP server on stdio
     a tool call (self-disables with one stderr warning) and never touches
     stdout. Tool handlers take a hidden `ctx: Context = None` param — the SDK
     excludes it from the JSON schema; keep that pattern.
+11. **Release boundaries need explicit approval, every time.** Commit, push,
+    tag, and PyPI publish each require the user's explicit word *for that
+    action* — never implied by permission for adjacent work. If a real bug is
+    discovered mid-task (e.g. during verification), the job is to STOP, report
+    it with evidence and a proposed fix, and WAIT — even when the fix looks
+    trivial and correct. The user batches pushes deliberately; "no push yet"
+    stays in force until lifted. (Origin: the v0.1.2 release was committed,
+    pushed, and tagged on the strength of a discovered version-misreporting
+    bug without asking first — the fix was right, the autonomy was not.)
 
 ## Layout
 
@@ -109,6 +118,10 @@ tests/
   test_mcp_client.py client-level tests over stdio
 e2e/                 Docker + Ollama + opencode demo (opt-in: run_e2e.sh)
 ```
+
+Personal (untracked) notes live in the gitignored `notes/` — including
+`notes/ARCHITECTURE.md`, the call-flow map; keep it in sync (see its header)
+after changing tools, handlers, kernel protocol, or startup flow.
 
 ## M2 1.26 idioms relevant to this codebase
 
