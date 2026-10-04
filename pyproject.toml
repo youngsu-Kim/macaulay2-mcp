@@ -6,7 +6,14 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "GPL-3.0-or-later"
 authors = [{ name = "Youngsu Kim" }]
-keywords = ["macaulay2", "mcp", "model-context-protocol", "algebraic-geometry", "computer-algebra"]
+keywords = [
+    "macaulay2",
+    "mcp",
+    "model-context-protocol",
+    "algebraic-geometry",
+    "commutative-algebra",
+    "computer-algebra-software",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
