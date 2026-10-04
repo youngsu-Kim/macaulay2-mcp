@@ -33,7 +33,15 @@ uv run macaulay2-mcp         # run the MCP server on stdio
    lines dangle and absorb the next line) AND produce no `oN` output —
    an assignment marker polluted M2's `oo`/`ooo` history, breaking the
    official tutorial's `4*5; oo` workflow (regression test:
-   `test_oo_history_survives_calls`). Blank or comment-only lines do NOT
+   `test_oo_history_survives_calls`). Reads go through the chunked
+   `_read_line` — NEVER `StreamReader.readline()`: M2 prints big integers
+   unwrapped and readline's 64 KiB limit crashes the call AND desyncs the
+   stream (regression: `test_huge_single_line_does_not_break_session`).
+   Block accumulation is capped at `MAX_BLOCK_BYTES`. A cancelled
+   `evaluate()` records its abandoned marker; the next call must drain to
+   it (`_resync_if_needed`, kill+restart fallback) so stale output never
+   mixes into later results (regression:
+   `test_cancelled_evaluate_resyncs_next_call`). Blank or comment-only lines do NOT
    terminate a logical M2 input. SIGINT (m2_interrupt) works in pipe mode:
    M2 prints `error: interrupted`, prompt indices stay in sync, the
    buffered marker still executes (the in-flight evaluate() returns
@@ -74,10 +82,10 @@ uv run macaulay2-mcp         # run the MCP server on stdio
    `stop_on_error` uses `split_logical_inputs` (blank/comment lines attach
    forward; trailing uncompletable lines dropped; documented limitation:
    dangling trailing operators). `_marker_handshake` matches the marker
-   TEXT anywhere in a line and tracks the index from any `iN :` line —
-   do NOT re-anchor to `^iN : <marker>`: a code block ending in a comment
-   absorbs the marker as a continuation line and the handshake would hang
-   to timeout (regression test: `test_trailing_comment_does_not_swallow_marker`).
+   TEXT anywhere in a line — do NOT re-anchor to `^iN : <marker>`: a code
+   block ending in a comment absorbs the marker as a continuation line and
+   the handshake would hang to timeout (regression test:
+   `test_trailing_comment_does_not_swallow_marker`).
 10. **Gate + journal contracts.** The OS-call gatekeeper (`gatekeep.py`)
     refuses process/file/network/env/session symbols BEFORE sending anything,
     at all four entry points (evaluate, run_script, import_file,
