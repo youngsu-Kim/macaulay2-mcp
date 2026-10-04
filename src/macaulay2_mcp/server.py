@@ -14,7 +14,7 @@ from . import __version__
 from .config import DEFAULT_TIMEOUT_S
 from .gatekeep import check_package_name, find_blocked_calls, rejection_message
 from .journal import Journal
-from .kernel import M2ScriptRunner, M2Session
+from .kernel import M2ScriptRunner, M2Session, MemoryInfo
 
 logger = logging.getLogger("macaulay2_mcp.server")
 
@@ -76,11 +76,14 @@ Prefer narrowing in M2 (take/drop, smaller examples) over dumping huge
 results into the chat.
 
 Memory: every m2_evaluate result ends with a line giving the M2 kernel's resident
-memory (RSS); pass show_memory=False to omit that line. RSS reads as a high-water
-mark because M2 rarely returns freed pages to the OS. The journal records rss_bytes
-for every evaluation regardless of the flag, and m2_memory() reports pid, uptime and
-current RSS on demand (a kernel killed by a timeout is sampled just before restart,
-so its last measurement survives).
+memory (RSS) and its peak; pass show_memory=False to omit that line. If the kernel
+is paging to swap, the line names the swap amount and adds a note laying out the
+options (m2_interrupt keeps earlier definitions; nothing is ever killed
+automatically). m2_memory() answers LIVE while a long m2_evaluate runs (pid,
+uptime, RSS, peak, swap) — use it to watch a job before deciding whether to stop
+it. The journal records rss_bytes, peak_rss_bytes and swap_bytes for every
+evaluation regardless of the flag. Platform note: on Linux swap is M2's own
+swapped pages; on macOS it is system-wide swap growth since this kernel started.
 
 Stopping: if the user wants to cancel a still-running computation, call
 m2_interrupt — M2 aborts the current input at a safe checkpoint, the running
@@ -239,6 +242,40 @@ unexecuted remainder.
 This is irreversible: ALL current session definitions are lost.
   (3) INSPECT — evaluate the affected names first to see what survived."""
 
+_SWAP_NOTE = (
+    "NOTE(macaulay2-mcp): the kernel's memory has spilled to swap disk. "
+    "Macaulay2 typically slows by ORDERS OF MAGNITUDE in this state (the "
+    "engine's working set thrashes against RAM). Nothing is killed "
+    "automatically; the options are: let it run, stop the current input "
+    "with m2_interrupt (earlier definitions survive), or restart and "
+    "shrink the computation. Which one is the user's call."
+)
+
+
+def _memory_footnote(info: MemoryInfo) -> str | None:
+    """Compose the per-evaluation memory line, or None if nothing is known.
+
+    Base form: ``(M2 memory: 118 MB resident, peak 121 MB)``. The swap
+    count (and its advisory note) appears only when the kernel is actually
+    paging — silence is the common case and zero adds no tokens worth
+    spending (author decision 2026-10-04; alternatives kept in
+    notes/roadmap.md). Platform semantics of peak/swap: kernel.py's
+    :meth:`M2Session.memory_info`.
+    """
+    parts = []
+    if info.rss_bytes is not None:
+        parts.append(f"{_human_size(info.rss_bytes)} resident")
+    if info.peak_rss_bytes is not None:
+        parts.append(f"peak {_human_size(info.peak_rss_bytes)}")
+    if not parts:
+        return None
+    line = "(M2 memory: " + ", ".join(parts)
+    if info.swap_bytes:  # non-None AND non-zero
+        line += f"; swap {_human_size(info.swap_bytes)})\n{_SWAP_NOTE}"
+    else:
+        line += ")"
+    return line
+
 
 def _gate_file(path: str) -> str | None:
     """Read a .m2 file and return a rejection message if it uses OS symbols.
@@ -328,8 +365,9 @@ def build_server() -> MCPServer:
                 unexecuted. Requires each line to be a self-contained
                 statement (do not break a line after a binary operator).
             show_memory: True (default) appends one line naming the kernel's
-                resident memory (RSS) to the result; False omits it. The
-                value is recorded in the journal either way.
+                memory (resident + peak; swap when it is paging) to the
+                result; False omits it. The values are recorded in the
+                journal either way.
         """
         # Roadmap: raise the max timeout (1 hr / 3600s) to a higher number in
         # a future version — the precondition (memory monitoring: RSS per
@@ -350,8 +388,12 @@ def build_server() -> MCPServer:
             )
         elif result.not_sent and not result.crashed:
             text += f"\n\n(stop_on_error: {result.not_sent} later input(s) were not executed.)"
-        if show_memory and result.rss_bytes is not None:
-            text += f"\n\n(M2 memory: {_human_size(result.rss_bytes)} resident)"
+        if show_memory:
+            note = _memory_footnote(
+                MemoryInfo(result.rss_bytes, result.peak_rss_bytes, result.swap_bytes)
+            )
+            if note:
+                text += "\n\n" + note
         journal.set_client_info(_client_info(ctx))
         seq = journal.record(
             "evaluate",
@@ -360,6 +402,8 @@ def build_server() -> MCPServer:
             stop_on_error=stop_on_error,
             show_memory=show_memory,
             rss_bytes=result.rss_bytes,
+            peak_rss_bytes=result.peak_rss_bytes,
+            swap_bytes=result.swap_bytes,
             elapsed_ms=int((time.perf_counter() - t0) * 1000),
             timed_out=result.timed_out,
             crashed=result.crashed,
@@ -402,17 +446,22 @@ def build_server() -> MCPServer:
 
     @server.tool()
     async def m2_memory(ctx: Context = None) -> str:
-        """Report the persistent Macaulay2 kernel's memory usage (RSS), pid, uptime.
+        """Report the persistent Macaulay2 kernel's memory: RSS, peak, swap, pid, uptime.
 
-        Reads the operating system's resident-set size of the kernel child
-        process (VmRSS on Linux, ps on macOS) — an unprivileged read of our
-        own child; nothing is sent to M2 and the session is untouched. RSS
-        approximates a high-water mark: M2 rarely returns freed pages to the
-        OS, so a number here stays up even after smaller computations.
+        Reads the operating system's bookkeeping for the kernel child
+        process — an unprivileged read; nothing is sent to M2 and the
+        session is untouched. Peak comes from kernel-tracked counters (no
+        sampler involved); swap is M2's own swapped pages on Linux, or the
+        system-wide swap growth since this kernel started on macOS (no
+        unprivileged per-process counter exists there). The probe is
+        lock-free: call it WHILE a long m2_evaluate runs to watch memory
+        live before deciding whether m2_interrupt is worthwhile. RSS reads
+        as a high-water mark because M2 rarely returns freed pages to the
+        OS.
         """
         t0 = time.perf_counter()
         pid = session.pid
-        rss = await session.rss_bytes()
+        info = await session.memory_info()
         uptime = session.uptime_s()
         if pid is None:
             out = (
@@ -420,22 +469,33 @@ def build_server() -> MCPServer:
                 "kernel starts lazily with the next evaluation "
                 f"(session: {session.describe()})."
             )
-        elif rss is None:
+        elif info.rss_bytes is None and info.peak_rss_bytes is None:
             out = (
-                f"pid {pid} is running but its RSS could not be read on this "
-                f"system; uptime {_human_duration(uptime)} "
+                f"pid {pid} is running but its memory could not be probed on "
+                f"this system; uptime {_human_duration(uptime)} "
                 f"(session: {session.describe()})."
             )
         else:
-            out = (
-                f"M2 kernel memory: {_human_size(rss)} resident ({rss} bytes)\n"
-                f"pid {pid}, uptime {_human_duration(uptime)}\n"
-                f"Session: {session.describe()}"
-            )
+            pieces = []
+            if info.rss_bytes is not None:
+                pieces.append(
+                    f"{_human_size(info.rss_bytes)} resident ({info.rss_bytes} bytes)"
+                )
+            if info.peak_rss_bytes is not None:
+                pieces.append(f"peak {_human_size(info.peak_rss_bytes)}")
+            if info.swap_bytes:
+                pieces.append(f"swap {_human_size(info.swap_bytes)}")
+            out = "M2 kernel memory: " + ", ".join(pieces) + "\n"
+            out += f"pid {pid}, uptime {_human_duration(uptime)}\n"
+            out += f"Session: {session.describe()}"
+            if info.swap_bytes:
+                out += "\n\n" + _SWAP_NOTE
         journal.set_client_info(_client_info(ctx))
         journal.record(
             "memory",
-            rss_bytes=rss,
+            rss_bytes=info.rss_bytes,
+            peak_rss_bytes=info.peak_rss_bytes,
+            swap_bytes=info.swap_bytes,
             pid=pid,
             uptime_s=round(uptime, 1) if uptime is not None else None,
             elapsed_ms=int((time.perf_counter() - t0) * 1000),

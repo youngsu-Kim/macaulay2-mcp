@@ -87,9 +87,9 @@ MAX_BLOCK_BYTES = 32 * 1024 * 1024
 # restarted to resynchronize.
 RESYNC_TIMEOUT_S = 30
 
-# How long the macOS/other-platform ``ps`` subprocess (the RSS probe, see
-# M2Session.rss_bytes) may take before we give up and report "unknown".
-RSS_PS_TIMEOUT_S = 5
+# How long each little read-only probe subprocess (ps / footprint / sysctl;
+# see M2Session.memory_info) may take before we give up and report "unknown".
+MEMORY_PROBE_TIMEOUT_S = 5
 
 
 # A line that is exactly a bare prompt (``iN :``). M2 emits these when it
@@ -189,28 +189,89 @@ def split_logical_inputs(code: str) -> list[str]:
     return chunks
 
 
-def parse_vmrss(status_text: str) -> int | None:
-    """Extract VmRSS (in KiB) from /proc/<pid>/status text; None if absent.
+def parse_proc_memory(status_text: str) -> tuple[int | None, int | None, int | None]:
+    """(VmRSS, VmHWM, VmSwap) in KiB from /proc/<pid>/status text.
 
-    Pure helper for :meth:`M2Session.rss_bytes` on Linux; unit-testable.
+    Linux's kernel tracks both the true high-water mark of residency (VmHWM,
+    since the process execed) and the process's pages currently swapped out
+    (VmSwap) — no sampler needed. Missing/garbled fields come back as None.
+    Pure helper; unit-testable.
     """
-    m = re.search(r"^VmRSS:[ \t]+(\d+)[ \t]*kB", status_text, re.MULTILINE)
-    return int(m.group(1)) if m else None
+    out: list[int | None] = []
+    for key in ("VmRSS", "VmHWM", "VmSwap"):
+        m = re.search(rf"^{key}:[ \t]+(\d+)[ \t]*kB", status_text, re.MULTILINE)
+        out.append(int(m.group(1)) if m else None)
+    return out[0], out[1], out[2]
 
 
 def parse_ps_rss(stdout_text: str) -> int | None:
     """Extract RSS (in KiB) from ``ps -o rss=`` output; None if unparsable.
 
-    Pure helper for :meth:`M2Session.rss_bytes` on non-Linux platforms.
+    Pure helper for :meth:`M2Session.memory_info` on non-Linux platforms.
     """
     token = stdout_text.strip()
     return int(token) if token.isdigit() else None
 
 
+def parse_footprint_peak(footprint_output: str) -> int | None:
+    """Extract phys_footprint_peak (bytes) from macOS ``footprint`` output.
+
+    The tool prints a kernel-tracked ``phys_footprint_peak: N UNIT`` line
+    (binary units labelled KB/MB/GB; ~3 significant digits — fine for a
+    high-water diagnostic). None when the line is absent or unparsable.
+    """
+    m = re.search(
+        r"phys_footprint_peak:[ \t]+([\d.]+)[ \t]*(B|KB|MB|GB)\b", footprint_output
+    )
+    if not m:
+        return None
+    mult = {"B": 1, "KB": 1024, "MB": 1024**2, "GB": 1024**3}[m.group(2)]
+    try:
+        return int(float(m.group(1)) * mult)
+    except ValueError:
+        return None
+
+
+def parse_swapusage(sysctl_output: str) -> int | None:
+    """Extract swap *used* (bytes) from macOS ``vm.swapusage`` output.
+
+    Format: ``total = 6144.00M  used = 3721.75M  free = 2422.25M  (encrypted)``.
+    System-wide (no unprivileged per-process swap counter exists on macOS).
+    None if unparsable.
+    """
+    m = re.search(r"used[ \t]*=[ \t]*([\d.]+)([KMG])", sysctl_output)
+    if not m:
+        return None
+    mult = {"K": 1024, "M": 1024**2, "G": 1024**3}[m.group(2)]
+    try:
+        return int(float(m.group(1)) * mult)
+    except ValueError:
+        return None
+
+
+@dataclass
+class MemoryInfo:
+    """One on-demand probe of the kernel's memory state (None = unknown).
+
+    ``peak_rss_bytes``: kernel-remembered high-water since the process
+    started (VmHWM on Linux; ``footprint``'s phys_footprint_peak on macOS —
+    a memory-pressure metric, binary units, ~3 significant digits).
+    ``swap_bytes``: VmSwap on Linux (this process, exact); on macOS the
+    system-wide swap growth since this kernel started (see
+    :meth:`M2Session.memory_info` caveats).
+    """
+
+    rss_bytes: int | None = None
+    peak_rss_bytes: int | None = None
+    swap_bytes: int | None = None
+
+
 @dataclass
 class EvalResult:
     output: str
-    rss_bytes: int | None = None  # kernel RSS sampled while it was alive
+    rss_bytes: int | None = None  # kernel memory probed while it was alive
+    peak_rss_bytes: int | None = None
+    swap_bytes: int | None = None
     timed_out: bool = False
     crashed: bool = False
     interrupted: bool = False
@@ -283,6 +344,9 @@ class M2Session:
         # monotonic clock of the current kernel's successful start (None
         # while no kernel runs); backs uptime_s() for the memory report.
         self._started_at: float | None = None
+        # system-wide swap in use when the current kernel started (macOS
+        # baseline for the swap delta; see memory_info()); None = unknown.
+        self._swap_baseline_bytes: int | None = None
 
     # ------------------------------------------------------------------ setup
 
@@ -318,56 +382,91 @@ class M2Session:
             return None
         return time.monotonic() - self._started_at
 
-    async def rss_bytes(self) -> int | None:
-        """Resident set size of the M2 kernel in bytes; None if unavailable.
+    @staticmethod
+    async def _probe_child(argv: tuple[str, ...]) -> str | None:
+        """Run a tiny read-only probe command; return stdout text or None.
 
-        Reads OS bookkeeping for OUR OWN child process — unprivileged on
-        macOS and Linux, and never touches the input stream, so (like
-        :meth:`interrupt`) it is lock-free and safe while a computation runs.
-        Linux: ``/proc/<pid>/status`` VmRSS (KiB). Elsewhere: ``ps -o rss=``
-        (KiB; the probe is bounded by ``RSS_PS_TIMEOUT_S``). Note RSS is the
-        process footprint: M2's engine rarely returns freed pages to the OS,
-        so it approximates a high-water mark. Never raises.
+        stdout piped and stderr discarded — our own stdout carries the
+        JSON-RPC protocol and must never be touched. Bounded by
+        ``MEMORY_PROBE_TIMEOUT_S``; any failure (missing binary, timeout,
+        nonzero exit) yields None. Never raises.
         """
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            out, _ = await asyncio.wait_for(
+                proc.communicate(), timeout=MEMORY_PROBE_TIMEOUT_S
+            )
+        except Exception:  # defensive: a failed probe must never break a call
+            logger.debug("memory probe failed: %s", argv, exc_info=True)
+            return None
+        if proc.returncode != 0:
+            return None
+        return out.decode("utf-8", errors="replace")
+
+    async def memory_info(self) -> MemoryInfo:
+        """One on-demand probe of the kernel's memory: RSS, peak, swap.
+
+        Reads OS bookkeeping for OUR OWN child process — unprivileged, and
+        nothing is sent to M2, so (like :meth:`interrupt`) it is lock-free
+        and answers even while a computation runs (that is what makes
+        ``m2_memory`` usable as a live watchdog before deciding to
+        interrupt). All fields are None when no kernel runs or every probe
+        failed. Never raises.
+
+        Platform sources: Linux reads ``/proc/<pid>/status`` once — VmRSS,
+        VmHWM (kernel-remembered peak since exec, no sampler needed) and
+        VmSwap (this process's pages currently swapped, exact). macOS reads
+        ``ps -o rss=``, ``footprint`` (kernel-remembered
+        phys_footprint_peak, ~3 significant digits, binary units) and
+        ``sysctl vm.swapusage``. macOS offers NO unprivileged per-process
+        swap counter, so swap_bytes there is the SYSTEM-WIDE swap growth
+        since this kernel started (baseline from :meth:`_start`); other
+        processes paging during the run can inflate the number.
+        """
+        info = MemoryInfo()
         pid = self.pid
         if pid is None:
-            return None
-        kib: int | None = None
-        try:
-            if sys.platform.startswith("linux"):
+            return info
+        if sys.platform.startswith("linux"):
+            try:
                 text = Path(f"/proc/{pid}/status").read_text(errors="replace")
-                kib = parse_vmrss(text)
-            else:
-                # stderr discarded, stdout piped: our own stdout carries the
-                # JSON-RPC protocol and must stay untouched (stdout rule).
-                proc = await asyncio.create_subprocess_exec(
-                    "ps",
-                    "-o",
-                    "rss=",
-                    "-p",
-                    str(pid),
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-                out, _ = await asyncio.wait_for(
-                    proc.communicate(), timeout=RSS_PS_TIMEOUT_S
-                )
-                if proc.returncode == 0:
-                    kib = parse_ps_rss(out.decode("utf-8", errors="replace"))
-        except Exception:  # pragma: no cover - defensive: probe never breaks a call
-            logger.debug("RSS probe failed for pid %s", pid, exc_info=True)
-            return None
-        return kib * 1024 if kib is not None else None
+            except OSError:
+                return info
+            rss_kib, hwm_kib, swap_kib = parse_proc_memory(text)
+            info.rss_bytes = rss_kib * 1024 if rss_kib is not None else None
+            info.peak_rss_bytes = hwm_kib * 1024 if hwm_kib is not None else None
+            info.swap_bytes = swap_kib * 1024 if swap_kib is not None else None
+            return info
+        rss_out = await self._probe_child(("ps", "-o", "rss=", "-p", str(pid)))
+        if rss_out is not None:
+            kib = parse_ps_rss(rss_out)
+            info.rss_bytes = kib * 1024 if kib is not None else None
+        peak_out = await self._probe_child(("footprint", "-p", str(pid)))
+        if peak_out is not None:
+            info.peak_rss_bytes = parse_footprint_peak(peak_out)
+        swap_out = await self._probe_child(("sysctl", "-n", "vm.swapusage"))
+        if swap_out is not None and self._swap_baseline_bytes is not None:
+            used = parse_swapusage(swap_out)
+            if used is not None:  # attribute the GROWTH, not the system total
+                info.swap_bytes = max(0, used - self._swap_baseline_bytes)
+        return info
 
-    async def _with_rss(self, result: EvalResult) -> EvalResult:
-        """Stamp ``result.rss_bytes`` (sampled NOW, while the kernel lives).
+    async def _with_memory(self, result: EvalResult) -> EvalResult:
+        """Stamp ``result``'s memory fields (probed NOW, while the kernel lives).
 
         Callers on paths that KILL the kernel (timeout, syntax-desync
-        restart) must sample through this BEFORE :meth:`_kill`, or the
+        restart) must probe through this BEFORE :meth:`_kill`, or the
         measurement — the one that matters most — is lost.
         """
-        if result.rss_bytes is None:
-            result.rss_bytes = await self.rss_bytes()
+        if result.rss_bytes is None and result.peak_rss_bytes is None:
+            info = await self.memory_info()
+            result.rss_bytes = info.rss_bytes
+            result.peak_rss_bytes = info.peak_rss_bytes
+            result.swap_bytes = info.swap_bytes
         return result
 
     def _ensure_config(self) -> M2Config:
@@ -419,6 +518,13 @@ class M2Session:
                 "Macaulay2 started but did not respond to the startup probe."
             ) from exc
         self._started_at = time.monotonic()
+        if not sys.platform.startswith("linux"):
+            # macOS swap attribution baseline: system-wide used now, with a
+            # fresh kernel; memory_info() reports growth above this (None =
+            # unknown, in which case swap is not reported rather than
+            # misattributed).
+            out = await self._probe_child(("sysctl", "-n", "vm.swapusage"))
+            self._swap_baseline_bytes = parse_swapusage(out) if out is not None else None
 
     async def _kill(self) -> None:
         """SIGKILL the coprocess (if any) and reset ALL stream state.
@@ -428,6 +534,7 @@ class M2Session:
         """
         proc, self._proc = self._proc, None
         self._started_at = None
+        self._swap_baseline_bytes = None
         self._linebuf.clear()
         self._pending_marker = None
         if proc is not None and proc.returncode is None:
@@ -656,7 +763,7 @@ class M2Session:
             logger.warning("evaluation timed out after %ds; restarting kernel", timeout_s)
             # stamp BEFORE the kill: the peak-ish footprint of the job that
             # just died is the measurement a timeout report exists to give.
-            timed = await self._with_rss(
+            timed = await self._with_memory(
                 EvalResult(output=_session_timeout_message(timeout_s), timed_out=True)
             )
             await self._kill()
@@ -693,7 +800,7 @@ class M2Session:
             # An unbalanced syntax error may have swallowed the marker and
             # desynchronized the input stream; restart to be safe.
             logger.warning("syntax error desync; restarting kernel")
-            result = await self._with_rss(
+            result = await self._with_memory(
                 EvalResult(
                     output=(
                         f"{block.strip()}\n\n"
@@ -721,7 +828,7 @@ class M2Session:
                 "completed before the interrupted one is still available; "
                 "the session is ready for new input."
             )
-        return await self._with_rss(
+        return await self._with_memory(
             EvalResult(
                 output=output,
                 interrupted=interrupted,
@@ -771,7 +878,7 @@ class M2Session:
             if contains_m2_error(block):
                 interrupted = "error: interrupted" in block
                 text = "\n\n".join(collected) if collected else "(no output before the error)"
-                return await self._with_rss(
+                return await self._with_memory(
                     EvalResult(
                         output=text,
                         errored=True,
@@ -783,7 +890,7 @@ class M2Session:
         text = "\n\n".join(collected).strip()
         if not text:
             text = "(the code ran successfully and produced no output)"
-        return await self._with_rss(EvalResult(output=text))
+        return await self._with_memory(EvalResult(output=text))
 
     async def reset(self) -> str:
         """Restart the kernel, discarding all session state."""

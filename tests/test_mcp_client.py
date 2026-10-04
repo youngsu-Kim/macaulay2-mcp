@@ -138,11 +138,12 @@ async def test_memory_footnote_suppressible_and_journaled(tmp_path):
         r_mem = await session.call_tool("m2_memory", {})
 
     default_text = r_default.content[0].text.rstrip()
-    assert default_text.endswith("resident)")
-    assert "(M2 memory: " in default_text
+    assert default_text.endswith(")")
+    assert "(M2 memory: " in default_text and ", peak " in default_text
     assert "M2 memory" not in r_quiet.content[0].text
     mem = r_mem.content[0].text
-    assert "M2 kernel memory:" in mem and "pid " in mem and "uptime " in mem
+    assert "M2 kernel memory:" in mem and "peak " in mem
+    assert "pid " in mem and "uptime " in mem
 
     files = list(tmp_path.glob("session-*.jsonl"))
     assert len(files) == 1
@@ -151,10 +152,14 @@ async def test_memory_footnote_suppressible_and_journaled(tmp_path):
     assert len(evaluations) == 3
     for e in evaluations:  # journaled regardless of the per-call flag
         assert isinstance(e["rss_bytes"], int) and e["rss_bytes"] > 0
-        assert evaluations[0]["show_memory"] is True  # 1 + 1 (default)
-        assert evaluations[1]["show_memory"] is True  # 2 + 2 (default)
-        assert evaluations[2]["show_memory"] is False  # 3 + 3 (suppressed)
-    assert any(e.get("event") == "memory" and e.get("rss_bytes", 0) > 0 for e in events)
+        assert isinstance(e["peak_rss_bytes"], int) and e["peak_rss_bytes"] > 0
+        assert e["swap_bytes"] is None or e["swap_bytes"] >= 0
+    assert evaluations[0]["show_memory"] is True  # 1 + 1 (default)
+    assert evaluations[1]["show_memory"] is True  # 2 + 2 (default)
+    assert evaluations[2]["show_memory"] is False  # 3 + 3 (suppressed)
+    assert any(
+        e.get("event") == "memory" and e.get("peak_rss_bytes", 0) > 0 for e in events
+    )
 
 
 async def test_load_preloaded_package_reports_already_loaded():

@@ -125,14 +125,19 @@ async def test_timeout_kills_and_restarts(session):
 async def test_evaluate_stamps_rss(session):
     result = await session.evaluate("1 + 1")
     assert isinstance(result.rss_bytes, int) and result.rss_bytes > 0
+    # peak is kernel-remembered (VmHWM / phys_footprint_peak); on macOS it is
+    # a different (pressure) metric than RSS, so only presence is pinned here
+    assert isinstance(result.peak_rss_bytes, int) and result.peak_rss_bytes > 0
+    assert result.swap_bytes is None or result.swap_bytes >= 0
 
 
 async def test_timeout_stamps_rss_before_restart(session):
     # the measurement that matters most must survive the kill: the kernel is
-    # sampled while alive, so the timed-out result still carries its footprint
+    # probed while alive, so the timed-out result still carries its footprint
     result = await session.evaluate("while true do()", timeout_s=3)
     assert result.timed_out
     assert isinstance(result.rss_bytes, int) and result.rss_bytes > 0
+    assert isinstance(result.peak_rss_bytes, int) and result.peak_rss_bytes > 0
 
 
 async def test_interrupt_stops_runaway_and_preserves_state(session):

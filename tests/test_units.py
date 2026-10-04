@@ -6,11 +6,19 @@ from macaulay2_mcp.gatekeep import rejection_message
 from macaulay2_mcp.journal import Journal
 from macaulay2_mcp.kernel import (
     _strip_trailing_prompt,
+    parse_footprint_peak,
+    parse_proc_memory,
     parse_ps_rss,
-    parse_vmrss,
+    parse_swapusage,
 )
 from macaulay2_mcp.scanner import mask
-from macaulay2_mcp.server import _clip_output, _escape_m2_string, _human_duration, _human_size
+from macaulay2_mcp.server import (
+    _clip_output,
+    _escape_m2_string,
+    _human_duration,
+    _human_size,
+    _memory_footnote,
+)
 
 # ------------------------------------------------------------------ config
 
@@ -44,21 +52,59 @@ def test_strip_trailing_prompt():
     assert _strip_trailing_prompt("plain") == "plain"
 
 
-def test_parse_vmrss():
+def test_parse_proc_memory():
     status = (
         "Name:\tM2\nState:\tS (sleeping)\nVmPeak:\t  999999 kB\n"
-        "VmRSS:\t   98765 kB\nVmSize:\t 999999 kB\n"
+        "VmRSS:\t   98765 kB\nVmHWM:\t  131072 kB\nVmSwap:\t    204 kB\n"
     )
-    assert parse_vmrss(status) == 98765
-    assert parse_vmrss("Name:\tM2\n") is None  # kernel not resident (odd)
-    assert parse_vmrss("VmRSS:\tabc kB\n") is None  # never trust the format
-    assert parse_vmrss("XVmRSS:\t5 kB\n") is None  # anchored at line start
+    assert parse_proc_memory(status) == (98765, 131072, 204)
+    assert parse_proc_memory("Name:\tM2\n") == (None, None, None)
+    assert parse_proc_memory("VmRSS:\tabc kB\n") == (None, None, None)
+    assert parse_proc_memory("XVmHWM:\t5 kB\n") == (None, None, None)
+    # partial files are fine: each field stands alone
+    assert parse_proc_memory("VmRSS:\t10 kB\n") == (10, None, None)
 
 
 def test_parse_ps_rss():
     assert parse_ps_rss(" 12345\n") == 12345
     assert parse_ps_rss("") is None
     assert parse_ps_rss("ps: unknown process\n") is None
+
+
+def test_parse_footprint_peak():
+    out = (
+        "Auxiliary data:\n    phys_footprint: 103 MB\n"
+        "    phys_footprint_peak: 1.5 GB\n\n"
+    )
+    assert parse_footprint_peak(out) == int(1.5 * 1024**3)
+    assert parse_footprint_peak("phys_footprint_peak: 263 MB") == 263 * 1024**2
+    assert parse_footprint_peak("phys_footprint_peak: 512 KB") == 512 * 1024
+    assert parse_footprint_peak("no aux block here") is None
+    assert parse_footprint_peak("phys_footprint_peak: junk MB") is None
+
+
+def test_parse_swapusage():
+    out = "vm.swapusage: total = 6144.00M  used = 3721.75M  free = 2422.25M  (encrypted)"
+    assert parse_swapusage(out) == int(3721.75 * 1024**2)
+    assert parse_swapusage("total = 0.00M  used = 0.00M  free = 0.00M") == 0
+    assert parse_swapusage("garbage") is None
+
+
+def test_memory_footnote_forms():
+    from macaulay2_mcp.kernel import MemoryInfo
+
+    assert (
+        _memory_footnote(MemoryInfo(118 * 1024**2, 121 * 1024**2, 0))
+        == "(M2 memory: 118.0 MB resident, peak 121.0 MB)"
+    )
+    # swap appears only when paging, and drags the advisory note along
+    swapping = _memory_footnote(MemoryInfo(118 * 1024**2, 4 * 1024**3, 2 * 1024**3))
+    assert swapping.startswith("(M2 memory: 118.0 MB resident, peak 4.0 GB; swap 2.0 GB)")
+    assert "ORDERS OF MAGNITUDE" in swapping
+    assert "m2_interrupt" in swapping
+    # peak unknown (probe failure) still shows resident; all-unknown -> None
+    assert _memory_footnote(MemoryInfo(1024, None, None)) == "(M2 memory: 1.0 KB resident)"
+    assert _memory_footnote(MemoryInfo(None, None, None)) is None
 
 
 def test_human_duration():
