@@ -65,7 +65,15 @@ Timeouts: m2_evaluate and m2_run_script are guarded by an author-set default of
 returns a TIMED OUT message, the computation was still running (no M2 error);
 retry with a larger timeout_s, and make the retried code self-contained (after
 a session timeout the session is restarted, so include ring/ideal setup again).
-For very long jobs, write code to a file and use m2_run_script instead.
+With stop_on_error=True the budget applies per input (a 10-input block can take
+up to 10x timeout_s). For very long jobs, write code to a file and use
+m2_run_script instead.
+
+Long output: results over ~120 lines / 32 KB come back excerpted (first 100
+and last 10 lines, with a notice naming where the FULL text was stored — the
+journal file and its event seq; when the journal is off, nothing is stored).
+Prefer narrowing in M2 (take/drop, smaller examples) over dumping huge
+results into the chat.
 
 Stopping: if the user wants to cancel a still-running computation, call
 m2_interrupt — M2 aborts the current input at a safe checkpoint, the running
@@ -92,7 +100,11 @@ network/env symbols). Nothing is executed and the session is untouched when
 this happens. Relay the BLOCKED message to the user; if they want such a
 call, THEY can enable specific symbols via the MACAULAY2_MCP_OS_ALLOW
 environment variable. Do not attempt to route around the gate (e.g. via
-value("...")) — flag it to the user instead and let them decide.
+value("...")) — flag it to the user instead and let them decide. The gate
+matches WORDS in code, not call positions: if a blocked symbol that is also
+an ordinary word (lines, system, quit) was meant here as a plain variable
+name, just rename it and retry. Rationale for the whole gate: the
+"The OS-access gate" section of the project README.
 
 Parallelism: the shared session serializes concurrent m2_evaluate calls by
 design (one kernel, cooperating state). For independent heavy work — e.g.
@@ -104,7 +116,83 @@ subagents, each handling a slice of the family).
 
 
 def _escape_m2_string(value: str) -> str:
+    """Make ``value`` safe to embed inside an M2 double-quoted string.
+
+    Used by m2_help/m2_load_package, which build a one-line M2 statement
+    around a user-supplied word; backslashes and quotes must not end the
+    literal early.
+    """
     return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+# Long-output policy: tool results past EITHER limit are excerpted for
+# display (head + tail). The journal keeps the full text (up to its own
+# 1 MiB field cap), so nothing is silently lost while the LLM/chat is not
+# flooded — see the "Long output" paragraph in INSTRUCTIONS.
+CLIP_MAX_LINES = 120  # ~2-3 dense terminal screens
+CLIP_MAX_BYTES = 32_768
+CLIP_HEAD_LINES = 100
+CLIP_TAIL_LINES = 10
+CLIP_SIDE_BYTES = 16_384  # byte guard per excerpted side (long-line cases)
+
+
+def _human_size(num: int) -> str:
+    size = float(num)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024.0 or unit == "GB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024.0
+    return f"{size:.1f} GB"  # unreachable
+
+
+def _byte_cut(text: str, limit: int) -> str:
+    """Truncate ``text`` to ``limit`` UTF-8 bytes, on a line boundary if any."""
+    data = text.encode("utf-8", errors="replace")
+    if len(data) <= limit:
+        return text
+    cut = data[:limit].decode("utf-8", errors="ignore")
+    nl = cut.rfind("\n")
+    if nl > limit // 2:
+        cut = cut[:nl]
+    return cut + "\n[...long line truncated by the server...]"
+
+
+def _clip_output(text: str, journal: Journal, seq: int | None) -> str:
+    """Excerpt oversized results; return the text to show the caller.
+
+    Applied to the FINAL composed result of m2_evaluate / m2_help /
+    m2_import_file / m2_run_script *after* the full text was journaled
+    (``seq`` is that record's number; None when the journal is disabled).
+    Fits-in texts are returned unchanged.
+    """
+    lines = text.splitlines()
+    nbytes = len(text.encode("utf-8", errors="replace"))
+    if len(lines) <= CLIP_MAX_LINES and nbytes <= CLIP_MAX_BYTES:
+        return text
+    head = _byte_cut("\n".join(lines[:CLIP_HEAD_LINES]), CLIP_SIDE_BYTES)
+    if len(lines) > CLIP_HEAD_LINES + CLIP_TAIL_LINES:
+        tail = _byte_cut("\n".join(lines[-CLIP_TAIL_LINES:]), CLIP_SIDE_BYTES)
+    else:
+        tail = ""
+    omitted = max(0, len(lines) - CLIP_HEAD_LINES - (CLIP_TAIL_LINES if tail else 0))
+    if seq is not None and journal.path is not None:
+        store = (
+            f"Full text saved in the journal: {journal.path} (event seq {seq}; "
+            f"records cap fields at 1 MiB)."
+        )
+    else:
+        store = (
+            "The journal is disabled (MACAULAY2_MCP_JOURNAL=off), so the full "
+            "output was NOT stored — re-run narrowed (take/drop/page in M2) to "
+            "see other parts."
+        )
+    notice = (
+        f"\n\n...[macaulay2-mcp: output excerpted for display — {len(lines):,} lines / "
+        f"{_human_size(nbytes)} total, {omitted:,} middle line(s) omitted. {store} "
+        f"The assistant may read the journal file directly if the user needs the "
+        f"full result.]...\n\n"
+    )
+    return head + notice + tail
 
 
 _ERROR_OPTIONS_NOTE = """NOTE(macaulay2-mcp): M2 reports an error above, but as a \
@@ -212,7 +300,8 @@ def build_server() -> MCPServer:
             timeout_s: Author-set safety limit (default 120, max 3600). Raise
                 it for heavy computations (large Groebner bases, Hilbert
                 polynomials, ...). On timeout the session is restarted, so the
-                retried code must include all setup again.
+                retried code must include all setup again. With
+                stop_on_error=True the budget applies PER INPUT.
             stop_on_error: Default False = REPL semantics (an error does not
                 stop later lines from running). True sends the code input by
                 input and halts at the first error, leaving later inputs
@@ -239,7 +328,7 @@ def build_server() -> MCPServer:
         elif result.not_sent and not result.crashed:
             text += f"\n\n(stop_on_error: {result.not_sent} later input(s) were not executed.)"
         journal.set_client_info(_client_info(ctx))
-        journal.record(
+        seq = journal.record(
             "evaluate",
             code=code,
             timeout_s=timeout_s,
@@ -254,7 +343,7 @@ def build_server() -> MCPServer:
             m2=session.describe(),
             output=text,
         )
-        return text
+        return _clip_output(text, journal, seq)
 
     @server.tool()
     async def m2_interrupt(ctx: Context = None) -> str:
@@ -310,8 +399,8 @@ def build_server() -> MCPServer:
         safe = _escape_m2_string(topic.strip())
         result = await session.evaluate(f'help "{safe}"', timeout_s=60)
         journal.set_client_info(_client_info(ctx))
-        journal.record("help", topic=topic, output=result.output)
-        return result.output
+        seq = journal.record("help", topic=topic, output=result.output)
+        return _clip_output(result.output, journal, seq)
 
     @server.tool()
     async def m2_run_script(
@@ -341,7 +430,7 @@ def build_server() -> MCPServer:
         text = result.output or "(the script produced no output)"
         if result.exit_code not in (0, None):
             text += f"\n\n(exit code {result.exit_code})"
-        journal.record(
+        seq = journal.record(
             "run_script",
             path=path,
             timeout_s=timeout_s,
@@ -350,7 +439,7 @@ def build_server() -> MCPServer:
             elapsed_ms=int((time.perf_counter() - t0) * 1000),
             output=text,
         )
-        return text
+        return _clip_output(text, journal, seq)
 
     @server.tool()
     async def m2_list_packages(ctx: Context = None) -> str:
@@ -425,8 +514,11 @@ def build_server() -> MCPServer:
             return f"ERROR: file not found: {path}"
         try:
             content = file.read_text(encoding="utf-8")
-        except OSError as exc:
-            return f"ERROR: could not read {path}: {exc}"
+        except (OSError, UnicodeDecodeError) as exc:
+            return (
+                f"ERROR: could not read {path} as UTF-8 text ({exc}). "
+                "m2_import_file expects a plain-text .m2 file."
+            )
         if not content.strip():
             return f"(file {path} is empty; nothing imported)"
         blocked = find_blocked_calls(content)
@@ -439,8 +531,10 @@ def build_server() -> MCPServer:
             result.output
             + f"\n\n(imported {len(content.splitlines())} lines from {path})"
         )
-        journal.record("import_file", path=path, lines=len(content.splitlines()), output=out)
-        return out
+        seq = journal.record(
+            "import_file", path=path, lines=len(content.splitlines()), output=out
+        )
+        return _clip_output(out, journal, seq)
 
     return server
 

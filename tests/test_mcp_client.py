@@ -7,10 +7,10 @@ import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import get_default_environment, stdio_client
 
+from macaulay2_mcp.config import M2NotFoundError, UnsupportedM2Version, load_config
+
 # stdio spawns get only a curated env — pass JOURNAL=off explicitly (finding F12)
 SERVER_ENV = {**get_default_environment(), "MACAULAY2_MCP_JOURNAL": "off"}
-
-from macaulay2_mcp.config import M2NotFoundError, UnsupportedM2Version, load_config
 
 EXPECTED_TOOLS = {
     "m2_evaluate",
@@ -83,6 +83,43 @@ async def test_import_file_via_mcp(tmp_path):
         return r2.content[0].text
 
     assert "77" in await _with_server(get)
+
+
+async def test_import_binary_file_reports_error(tmp_path):
+    """Regression (M3): a non-UTF-8 file must return a clean ERROR message,
+    not raise out of the tool handler."""
+    bad = tmp_path / "bin.m2"
+    bad.write_bytes(b"\x00\x01\x02\xff\xfe not utf8")
+
+    async def get(session: ClientSession):
+        r = await session.call_tool("m2_import_file", {"path": str(bad)})
+        return r.content[0].text if r.content else ""
+
+    text = await _with_server(get)
+    assert "ERROR" in text and "UTF-8" in text
+
+
+async def test_long_output_excerpted_and_full_text_in_journal(tmp_path):
+    """Integration (H1 policy): >120-line/>32KB result comes back as an
+    excerpt naming the journal path + seq; the journal keeps the full text.
+    10^300000 doubles as the live ~300 KB single-line test."""
+    import json
+
+    env = {**get_default_environment(), "MACAULAY2_MCP_JOURNAL": str(tmp_path)}
+    params = StdioServerParameters(command=sys.executable, args=["-m", "macaulay2_mcp"], env=env)
+    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        res = await session.call_tool("m2_evaluate", {"code": "10^300000", "timeout_s": 60})
+        text = res.content[0].text
+
+    assert "excerpted for display" in text
+    assert len(text) < 60_000
+    files = list(tmp_path.glob("session-*.jsonl"))
+    assert len(files) == 1
+    record = json.loads(files[0].read_text().splitlines()[-1])
+    assert record["event"] == "evaluate"
+    assert record["output"].count("0") > 290_000  # full 300 KB text journaled
+    assert f"event seq {record['seq']}" in text
 
 
 async def test_load_preloaded_package_reports_already_loaded():

@@ -42,3 +42,14 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+[tool.ruff.lint]
+# E1/E2/E3/W (indentation, blank lines, trailing whitespace) are preview-only
+# rules in ruff 0.16 — pycodestyle was migrated to preview — so lint preview
+# must be on. But preview also revives stray rules from other families, so
+# the rule set is pinned explicitly (not extend-select) to pycodestyle +
+# pyflakes + isort. E501 stays off: line-length is a formatter setting, not
+# a correctness rule, and rewrapping long strings here buys nothing.
+preview = true
+select = ["E1", "E2", "E3", "E4", "E7", "E9", "F", "I", "W"]
+ignore = ["E501"]

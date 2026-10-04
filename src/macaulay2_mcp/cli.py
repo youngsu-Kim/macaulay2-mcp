@@ -39,10 +39,8 @@ def run_selftest() -> int:
         print(f"[FAIL] locating Macaulay2:\n{exc}")
         return 1
 
-    if not _check("found Macaulay2", True, detail=config.binary):
-        return 1
-    if not _check("supported version (1.26.x)", True, detail=config.version_str):
-        return 1
+    print(f"[OK] found Macaulay2: {config.binary}")
+    print(f"[OK] supported version (1.26.x): {config.version_str}")
 
     from .kernel import M2Session
 

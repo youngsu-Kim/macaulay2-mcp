@@ -58,15 +58,14 @@ class Journal:
         self._client: dict | None = None
         self._client_recorded = False
         self._m2_info: dict | None = None
-        self._disabled_reason: str | None = None
         if base_dir is not None:
             try:
                 base_dir.mkdir(parents=True, exist_ok=True)
                 stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
                 self._path = base_dir / f"session-{stamp}-{os.getpid()}.jsonl"
             except OSError as exc:
-                self._disabled_reason = f"cannot create {base_dir}: {exc}"
                 self._path = None
+                logger.warning("journal disabled: cannot create %s: %s", base_dir, exc)
 
     # --------------------------------------------------------------- factory
 
@@ -102,28 +101,37 @@ class Journal:
         if info and self._m2_info is None and not self._header_written:
             self._m2_info = info
 
-    def record(self, event: str, **fields) -> None:
+    def record(self, event: str, **fields) -> int | None:
+        """Append one record (writing the lazy header first); returns its seq
+        number, or None when the journal is/was disabled.
+
+        The returned seq lets callers point users at the exact line holding
+        the full text of an excerpted output (see server._clip_output).
+        """
         if self._path is None:
-            return
+            return None
         try:
             if not self._header_written:
                 self._write(self._header())
                 self._header_written = True
                 self._seq = 1  # header holds seq 0; records count from 1
+            seq = self._seq
             record = {"t": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
-                      "seq": self._seq, "event": event}
+                      "seq": seq, "event": event}
             self._seq += 1
             for key, value in fields.items():
                 if isinstance(value, str):
                     value = _truncate(value)
                 record[key] = value
             self._write(record)
+            return seq
         except Exception as exc:  # noqa: BLE001 - journaling must never break a tool call
             self._path = None
             print(
                 f"macaulay2-mcp: journal disabled after error: {exc}",
                 file=sys.stderr,
             )
+            return None
 
     # ------------------------------------------------------------- internals
 

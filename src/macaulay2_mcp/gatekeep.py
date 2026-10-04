@@ -70,6 +70,20 @@ OS_SYMBOLS: frozenset[str] = frozenset(
 
 _ALLOW_ENV = "MACAULAY2_MCP_OS_ALLOW"
 
+# Human-facing rationale, linked from every rejection message.
+_DOCS_URL = "https://github.com/youngsu-Kim/macaulay2-mcp#the-os-access-gate"
+
+# Symbols whose blocked WORD is also a plausible everyday variable name
+# (``lines = 27`` for the lines on a cubic surface). The gate matches words
+# in code position, not call positions, so these can false-positive; the
+# rejection message then tells the reader exactly how to recover.
+_AMBIGUOUS_SYMBOLS = {
+    "lines": "M2's file-reading function",
+    "system": "M2's shell-command runner",
+    "quit": "M2's kernel-exit function",
+    "useURL": "M2's URL-download helper",
+}
+
 _CATEGORIES = {
     "system": "process execution",
     "runProgram": "process execution",
@@ -85,26 +99,26 @@ _CATEGORIES = {
     "lines": "file read",
     "readFile": "file read",
     "openIn": "file read",
-        "writeFile": "file write",
-        "openOut": "file write",
+    "writeFile": "file write",
+    "openOut": "file write",
     "deleteFile": "file mutation",
     "renameFile": "file mutation",
     "makeDirectory": "file mutation",
     "deleteDirectory": "file mutation",
     "installPackage": "package install (disk write)",
     "exportVars": "package export (disk write)",
-        "getEnvironment": "environment disclosure",
-        "currentDirectory": "environment disclosure",
-        "quit": "session destruction",
-        "viewHelp": "viewer/browser launch",
-    }
+    "getEnvironment": "environment disclosure",
+    "currentDirectory": "environment disclosure",
+    "quit": "session destruction",
+    "viewHelp": "viewer/browser launch",
+}
 
 
 def allowed_symbols() -> frozenset[str]:
     raw = os.environ.get(_ALLOW_ENV, "")
     return frozenset(tok.strip() for tok in raw.split(",") if tok.strip())
 
-# We need to add a unit test
+
 def find_blocked_calls(code: str) -> list[str]:
     """Return blocked OS-symbol mentions in ``code`` (sorted, unique).
 
@@ -122,19 +136,42 @@ def find_blocked_calls(code: str) -> list[str]:
 
 
 def rejection_message(symbol: str) -> str:
+    """The LLM-facing refusal text: informs, never directs (AGENTS rule 8).
+
+    Always states that nothing ran, the honesty limit of the gate, and the
+    user's opt-in path; words that double as everyday variable names get a
+    rename hint, and every message links the human-facing rationale in the
+    README.
+    """
     category = _CATEGORIES.get(symbol, "operating-system access")
-    return (
-        f"BLOCKED: the macaulay2-mcp gatekeeper refuses '{symbol}' ({category}).\n"
-        f"Nothing was executed; the M2 session is untouched.\n"
-        f"The gate is a guardrail against accidents, not a sandbox: M2's "
-        f"value(\"...\") can still construct calls dynamically, so a determined "
-        f"caller is not stopped — run this server in a container if you need "
-        f"isolation.\n"
+    parts = [
+        f"BLOCKED: the macaulay2-mcp gatekeeper refuses '{symbol}' ({category}).",
+        "Nothing was executed; the M2 session is untouched.",
+    ]
+    if symbol in _AMBIGUOUS_SYMBOLS:
+        parts.append(
+            f"NOTE: '{symbol}' is also an ordinary word — if it appears here only "
+            f"as a variable name (not {_AMBIGUOUS_SYMBOLS[symbol]}), rename the "
+            f"variable and retry; the gate matches words in code, not call "
+            f"positions, and cannot tell the two apart."
+        )
+    parts.append(
+        "The gate is a guardrail against accidents, not a sandbox: M2's "
+        "value(\"...\") can still construct calls dynamically, so a determined "
+        "caller is not stopped — run this server in a container if you need "
+        "isolation."
+    )
+    parts.append(
         f"If '{symbol}' is exactly what you need, the user can enable it by "
         f"setting the environment variable {_ALLOW_ENV} to include '{symbol}' "
         f"(e.g. {_ALLOW_ENV}=\"{symbol}\") for the server process, then "
         f"restarting the MCP client."
     )
+    parts.append(
+        f"Why this safeguard exists (a deliberate decision by the MCP server's "
+        f"author, explained for humans): {_DOCS_URL}"
+    )
+    return "\n".join(parts)
 
 
 def check_package_name(name: str) -> str | None:

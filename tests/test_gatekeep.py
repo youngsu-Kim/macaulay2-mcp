@@ -6,9 +6,6 @@ import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import get_default_environment, stdio_client
 
-# stdio spawns get only a curated env — pass JOURNAL=off explicitly (finding F12)
-SERVER_ENV = {**get_default_environment(), "MACAULAY2_MCP_JOURNAL": "off"}
-
 from macaulay2_mcp.config import M2NotFoundError, UnsupportedM2Version, load_config
 from macaulay2_mcp.gatekeep import (
     OS_SYMBOLS,
@@ -17,6 +14,9 @@ from macaulay2_mcp.gatekeep import (
     find_blocked_calls,
     rejection_message,
 )
+
+# stdio spawns get only a curated env — pass JOURNAL=off explicitly (finding F12)
+SERVER_ENV = {**get_default_environment(), "MACAULAY2_MCP_JOURNAL": "off"}
 
 
 def _m2_available() -> bool:
@@ -72,6 +72,7 @@ def test_rejection_message_contract():
     assert "Nothing was executed" in msg
     assert "MACAULAY2_MCP_OS_ALLOW" in msg  # how to enable, reversibly
     assert "not a sandbox" in msg  # honesty clause
+    assert "the-os-access-gate" in msg  # human-facing rationale link
 
 
 def test_list_covers_verified_surface():

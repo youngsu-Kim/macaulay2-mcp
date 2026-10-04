@@ -268,6 +268,99 @@ def test_contains_m2_error_signature():
 
 
 # ---------------------------------------------------------------------------
+# Chunked line reader / handshake cap (fake streams; no M2 needed)
+# ---------------------------------------------------------------------------
+
+
+def _fake_session(payload: bytes) -> M2Session:
+    """M2Session wired to an in-memory stdout (fed ``payload``) and a dummy
+    stdin, so the protocol plumbing can be tested without Macaulay2."""
+    import asyncio as _a
+    from types import SimpleNamespace
+
+    s = M2Session()
+    sr = _a.StreamReader()
+    sr.feed_data(payload)
+    sr.feed_eof()
+
+    class _Stdin:
+        def write(self, b):
+            pass
+
+        async def drain(self):
+            pass
+
+    s._proc = SimpleNamespace(stdout=sr, stdin=_Stdin(), returncode=None)
+    return s
+
+
+async def test_read_line_handles_line_far_past_readline_limit():
+    """Regression (H1): StreamReader.readline() dies at 64 KiB lines; our
+    chunked _read_line must return a 300 KB line intact."""
+    import asyncio as _a
+
+    huge = b"x" * 300_000 + b"\n"
+    s = _fake_session(huge + b"second\n")
+    deadline = _a.get_running_loop().time() + 5
+    assert len(await s._read_line(deadline)) == 300_001  # + newline
+    assert await s._read_line(deadline) == "second\n"
+
+
+async def test_read_line_eof_returns_final_unterminated_line():
+    import asyncio as _a
+
+    from macaulay2_mcp.kernel import KernelCrashed
+
+    s = _fake_session(b"tail without newline")
+    deadline = _a.get_running_loop().time() + 5
+    assert await s._read_line(deadline) == "tail without newline"
+    with pytest.raises(KernelCrashed):
+        await s._read_line(deadline)
+
+
+async def test_marker_handshake_with_huge_line_terminates():
+    marker = "m2MCPdeadbeef00"
+    payload = b"o1 = " + b"9" * 200_000 + b"\n" + f"i2 : scan({{}}, i -> {marker})\n".encode()
+    s = _fake_session(payload)
+    block = await s._marker_handshake(marker, 5, write=b"code\n")
+    assert "999" in block
+    assert marker not in block  # the marker echo itself is not part of the block
+
+
+async def test_marker_handshake_caps_block_size(monkeypatch):
+    import macaulay2_mcp.kernel as kernel_mod
+
+    monkeypatch.setattr(kernel_mod, "MAX_BLOCK_BYTES", 500)
+    marker = "m2MCPcafe000001"
+    payload = b"y" * 4000 + b"\n" + f"i9 : scan({{}}, i -> {marker})\n".encode()
+    s = _fake_session(payload)
+    block = await s._marker_handshake(marker, 5, write=b"code\n")
+    assert "in-memory cap" in block
+    assert block.count("y") < 4000  # remainder was discarded, not stored
+
+
+async def test_resync_drains_stale_marker():
+    """M2 fix: after a cancel, the next handshake must consume the old block
+    up to (and including) the abandoned marker before any mixing."""
+
+    stale = "m2MCPaaaa111111"
+    payload = (
+        b"stdio:1:0: error: interrupted\n"
+        + f"i3 : scan({{}}, i -> {stale})\n".encode()
+        + b"o4 = 2\n"
+        + "i4 : scan({}, i -> m2MCPbbbb222222)\n".encode()
+    )
+    s = _fake_session(payload)
+    s._pending_marker = stale
+    await s._resync_if_needed()
+    assert s._pending_marker is None
+    # stale output was consumed; the reader is positioned mid-stream
+    block = await s._marker_handshake("m2MCPbbbb222222", 5, write=b"")
+    assert "interrupted" not in block
+    assert "o4 = 2" in block
+
+
+# ---------------------------------------------------------------------------
 # Handshake robustness & stop_on_error (require live M2)
 # ---------------------------------------------------------------------------
 
@@ -309,3 +402,36 @@ async def test_stop_on_error_halts_before_side_effects(session):
     assert "Symbol" in p2.output  # never assigned: halt worked
     p1 = await session.evaluate("p1")
     assert "1" in p1.output  # pre-error statements took effect
+
+
+async def test_huge_single_line_does_not_break_session(session):
+    """Regression (H1, live): M2 prints big integers unwrapped, so 10^300000
+    is a ~300 KB single output line - the old 64 KiB readline() crashed on
+    this; the chunked reader must absorb it and stay usable."""
+    r = await session.evaluate("10^300000", timeout_s=30)
+    assert not r.crashed and not r.timed_out
+    assert r.output.count("0") > 290_000
+    assert "2" in (await session.evaluate("1 + 1")).output
+
+
+async def test_cancelled_evaluate_resyncs_next_call(session):
+    """Regression (M2 fix): cancelling an in-flight evaluation must leave no
+    stale output for the NEXT call (no leaked 'interrupted' text, no orphan
+    marker), and earlier state must survive the graceful SIGINT path."""
+    await session.evaluate("beforeCancel = 7")
+    task = asyncio.create_task(session.evaluate("while true do()", timeout_s=60))
+    for _ in range(300):
+        if session._busy:
+            break
+        await asyncio.sleep(0.05)
+    assert session._busy
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    nxt = await asyncio.wait_for(session.evaluate("2 * 21"), timeout=40)
+    assert "42" in nxt.output
+    low = nxt.output.lower()
+    assert "interrupted" not in low  # stale block drained, not returned
+    assert "m2MCP" not in nxt.output  # no marker echo leaked
+    after = await session.evaluate("beforeCancel")
+    assert "7" in after.output  # state preserved (SIGINT, not kill)

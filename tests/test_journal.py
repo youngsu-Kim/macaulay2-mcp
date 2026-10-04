@@ -51,7 +51,7 @@ def test_header_lazy_and_carries_client_info(tmp_path):
     j = Journal(tmp_path, "0.1.0")
     j.set_client_info({"name": "claude-code", "version": "1.2.3"})
     j.record("evaluate", code="x=1", output="o2 = 1")
-    lines = [json.loads(l) for l in j.path.read_text().splitlines()]
+    lines = [json.loads(rec) for rec in j.path.read_text().splitlines()]
     assert lines[0]["event"] == "session"
     assert lines[0]["client"]["name"] == "claude-code"
     assert lines[0]["server_version"] == "0.1.0"
@@ -65,9 +65,9 @@ def test_client_info_arriving_after_header_emits_record(tmp_path):
     j.record("os_block", tool="m2_evaluate")  # writes header (client unknown yet)
     j.set_client_info({"name": "opencode", "version": "4.5"})
     j.record("evaluate", code="1")
-    lines = [json.loads(l) for l in j.path.read_text().splitlines()]
+    lines = [json.loads(rec) for rec in j.path.read_text().splitlines()]
     assert lines[0]["client"] is None
-    client_recs = [l for l in lines if l["event"] == "client"]
+    client_recs = [rec for rec in lines if rec["event"] == "client"]
     assert len(client_recs) == 1
     assert client_recs[0]["client"]["name"] == "opencode"
 
@@ -121,13 +121,13 @@ async def test_live_journal_captures_events_and_client(tmp_path):
 
     files = list(logdir.glob("session-*.jsonl"))
     assert len(files) == 1
-    lines = [json.loads(l) for l in files[0].read_text().splitlines()]
+    lines = [json.loads(rec) for rec in files[0].read_text().splitlines()]
     header = lines[0]
     assert header["event"] == "session"
     # the connected MCP host (i.e., which LLM client drove this session):
     assert header["client"]["name"] == "journal-test-client"
     assert header["client"]["version"] == "9.9"
-    events = [l["event"] for l in lines[1:]]
+    events = [rec["event"] for rec in lines[1:]]
     assert events == ["evaluate", "os_block"]
     ok = lines[1]
     assert ok["code"] == "jj = 40 + 1"

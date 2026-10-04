@@ -30,12 +30,19 @@ Protocol (verified against M2 1.26.06 over piped stdin/stdout):
   input. Code with a syntax error that leaves the input unbalanced swallows
   the marker line; the resulting "syntax error" on stderr is detected and
   the session is restarted to resynchronize.
-* SIGINT (see :meth:`M2Session.interrupt`) aborts the current input at M2's
-  safe checkpoints: ``error: interrupted`` is printed, prompt indices stay
-  in sync, and the buffered marker still executes — so an in-flight
-  ``evaluate()`` completes its handshake and returns normally. SIGINT while
-  the kernel merely waits for input only emits a bare prompt line (filtered
-  from evaluation blocks). Both behaviours verified on M2 1.26.06.
+ * SIGINT (see :meth:`M2Session.interrupt`) aborts the current input at M2's
+   safe checkpoints: ``error: interrupted`` is printed, prompt indices stay
+   in sync, and the buffered marker still executes — so an in-flight
+   ``evaluate()`` completes its handshake and returns normally. SIGINT while
+   the kernel merely waits for input only emits a bare prompt line (filtered
+   from evaluation blocks). Both behaviours verified on M2 1.26.06.
+ * Output lines of ANY length are read via a chunked buffer (``_read_line``);
+   ``StreamReader.readline()``'s 64 KiB limit would crash on legitimate long
+   M2 output. Total accumulation per block is capped at ``MAX_BLOCK_BYTES``.
+ * If a client cancels an in-flight ``evaluate()``, the kernel is SIGINTed
+   and the next call first DRAINS the stale output up to the abandoned
+   marker (``_resync_if_needed``) so results never mix; a computation that
+   ignores SIGINT forces a kernel restart (state lost) in that fallback.
 """
 
 from __future__ import annotations
@@ -66,6 +73,17 @@ logger = logging.getLogger("macaulay2_mcp.kernel")
 
 class KernelCrashed(Exception):
     """The M2 process exited unexpectedly."""
+
+
+# Safety bound on how much output a single evaluation block may accumulate in
+# memory (a runaway ``while true do print ...``). Lines past this cap are
+# counted but discarded; the marker handshake keeps reading until the marker.
+MAX_BLOCK_BYTES = 32 * 1024 * 1024
+
+# How long to wait (after a cancelled evaluate + SIGINT) for the stale block's
+# marker echo to drain from the stream before the session is killed and
+# restarted to resynchronize.
+RESYNC_TIMEOUT_S = 30
 
 
 # A line that is exactly a bare prompt (``iN :``). M2 emits these when it
@@ -174,7 +192,6 @@ class EvalResult:
     errored: bool = False  # block contains an M2 error report
     stopped: bool = False  # stop_on_error: later inputs were NOT sent
     not_sent: int = 0  # number of inputs skipped by stopping
-    stderr: str = ""
 
 
 @dataclass
@@ -182,7 +199,6 @@ class ScriptResult:
     output: str
     exit_code: int | None
     timed_out: bool = False
-    stderr: str = ""
 
 
 def timeout_message(
@@ -190,10 +206,10 @@ def timeout_message(
 ) -> str:
     return (
         f"TIMED OUT: the Macaulay2 computation did not finish within {timeout_s} seconds.\n"
-        f"This limit is enforced by the macaulay2-mcp server (its author-set default, "
-        f"currently {MAX_TIMEOUT_S}s maximum) as a safety guard against runaway or "
-        f"infinite computations hanging {context} — it is NOT an error reported by "
-        f"Macaulay2.\n"
+        f"This limit is a safety guard set by the macaulay2-mcp server's author "
+        f"(default {DEFAULT_TIMEOUT_S}s, overridable per call up to {MAX_TIMEOUT_S}s) "
+        f"against runaway or infinite computations hanging {context} — it is NOT an "
+        f"error reported by Macaulay2.\n"
         f"{restart_note}"
     )
 
@@ -229,7 +245,13 @@ class M2Session:
     def __init__(self, config: M2Config | None = None) -> None:
         self._config = config
         self._proc: asyncio.subprocess.Process | None = None
-        self._prompt_index = 0
+        # Byte buffer for the chunked line reader (_read_line). Lines from
+        # M2 can exceed StreamReader's 64 KiB readline limit (huge numbers,
+        # long print strings), so we never call readline().
+        self._linebuf = bytearray()
+        # Marker of a cancelled evaluation whose output has not been drained
+        # yet; the next call resynchronizes before sending anything.
+        self._pending_marker: str | None = None
         self._lock = asyncio.Lock()
         self._config_error: str | None = None
         self._busy = False
@@ -256,6 +278,12 @@ class M2Session:
         return True
 
     def _ensure_config(self) -> M2Config:
+        """Resolve (and cache) the M2 binary + version gate.
+
+        Used by ``_start``. Raises M2NotFoundError / UnsupportedM2Version /
+        M2StartupError; failures are not cached so a corrected environment
+        (e.g. new M2_BIN) is picked up on the next call.
+        """
         if self._config is None:
             try:
                 self._config = load_config()
@@ -265,6 +293,11 @@ class M2Session:
         return self._config
 
     async def _start(self) -> None:
+        """Spawn the M2 coprocess and verify it answers the startup probe.
+
+        Used only via :meth:`ensure_started` (callers never start the kernel
+        directly). Raises M2StartupError if the probe never completes.
+        """
         config = self._ensure_config()
         logger.info("starting M2 kernel: %s", " ".join(config.kernel_command()))
         # stderr is merged into stdout at the OS level so that M2's error
@@ -275,11 +308,13 @@ class M2Session:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
-        self._prompt_index = 0
+        self._linebuf.clear()
+        self._pending_marker = None
         assert self._proc.stderr is None
         # Probe: the kernel blocks on its first read, so verify it is alive by
-        # sending a marker statement (a complete, no-side-effect assignment)
-        # and waiting for both its echo and its deterministic result.
+        # sending a marker statement (a complete, void-valued scan; see
+        # _marker_stmt) and waiting for its echo. Any garbage before the echo
+        # is discarded along with the handshake's return value.
         marker = self._new_marker()
         try:
             await self._marker_handshake(
@@ -292,7 +327,14 @@ class M2Session:
             ) from exc
 
     async def _kill(self) -> None:
+        """SIGKILL the coprocess (if any) and reset ALL stream state.
+
+        Safe to call when nothing runs. Used by the timeout/crash paths,
+        :meth:`reset`, :meth:`close`, and the resync fallback.
+        """
         proc, self._proc = self._proc, None
+        self._linebuf.clear()
+        self._pending_marker = None
         if proc is not None and proc.returncode is None:
             proc.kill()
             try:
@@ -301,6 +343,8 @@ class M2Session:
                 pass
 
     async def ensure_started(self) -> None:
+        """Start the kernel lazily if absent/dead; the single entry point
+        every code path uses before touching the coprocess."""
         if self._proc is None or self._proc.returncode is not None:
             await self._kill()
             await self._start()
@@ -323,15 +367,38 @@ class M2Session:
     # ------------------------------------------------------------- I/O loop
 
     async def _read_line(self, deadline: float) -> str:
+        """Read one \\n-terminated line from the kernel, of ANY length.
+
+        Used by :meth:`_marker_handshake` and the resync drain. Deliberately
+        avoids ``StreamReader.readline()``: its 64 KiB limit raises
+        LimitOverrunError on legitimate long M2 output lines (huge numbers,
+        long ``print`` strings) and that exception would desynchronize the
+        session. Instead we pull raw chunks into ``self._linebuf`` and split
+        on newlines ourselves. Raises asyncio.TimeoutError past ``deadline``
+        or KernelCrashed at EOF (any final line without a trailing newline is
+        returned first).
+        """
         assert self._proc is not None and self._proc.stdout is not None
-        remaining = deadline - asyncio.get_running_loop().time()
-        if remaining <= 0:
-            raise asyncio.TimeoutError
-        line = await asyncio.wait_for(self._proc.stdout.readline(), timeout=remaining)
-        if not line:
-            code = self._proc.returncode
-            raise KernelCrashed(f"Macaulay2 exited unexpectedly (return code {code}).")
-        return line.decode("utf-8", errors="replace")
+        stdout = self._proc.stdout
+        loop = asyncio.get_running_loop()
+        while True:
+            nl = self._linebuf.find(b"\n")
+            if nl >= 0:
+                line = bytes(self._linebuf[: nl + 1])
+                del self._linebuf[: nl + 1]
+                return line.decode("utf-8", errors="replace")
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise asyncio.TimeoutError
+            chunk = await asyncio.wait_for(stdout.read(65536), timeout=remaining)
+            if not chunk:
+                if self._linebuf:
+                    line = bytes(self._linebuf)
+                    self._linebuf.clear()
+                    return line.decode("utf-8", errors="replace")
+                code = self._proc.returncode
+                raise KernelCrashed(f"Macaulay2 exited unexpectedly (return code {code}).")
+            self._linebuf.extend(chunk)
 
     async def _marker_handshake(
         self, marker: str, timeout_s: float, *, write: bytes
@@ -344,7 +411,10 @@ class M2Session:
         line, so the marker echo is the single boundary: everything printed
         before it is the answer to the preceding code. Matching is on the
         unique marker TEXT (not the ``iN :`` prefix) so absorbed echoes still
-        terminate the read. Raises asyncio.TimeoutError or KernelCrashed.
+        terminate the read. Accumulation is capped at ``MAX_BLOCK_BYTES``
+        (runaway-output guard): lines past the cap are counted but discarded,
+        and a notice stands in for them. Raises asyncio.TimeoutError or
+        KernelCrashed.
         """
         assert self._proc is not None and self._proc.stdin is not None
         self._proc.stdin.write(write)
@@ -354,25 +424,70 @@ class M2Session:
         deadline = loop.time() + timeout_s
         # ends with "<marker>)" (absorbed or own echo line); marker text is unique
         marker_re = re.compile(rf"\b{re.escape(marker)}\)[ \t]*\r?$")
-        index_re = re.compile(r"^i(\d+) :")
         lines: list[str] = []
+        total = 0
+        overflowed = False
         while True:
             text = await self._read_line(deadline)
-            m = index_re.match(text)
-            if m:
-                self._prompt_index = max(self._prompt_index, int(m.group(1)))
             if marker_re.search(text):
+                if overflowed:
+                    lines.append(
+                        "<the output exceeded the server's in-memory cap "
+                        f"({MAX_BLOCK_BYTES} bytes); the remainder was discarded"
+                        " — re-run with narrower output (take(...)/page(...)) or"
+                        " write results to a file with a script>\n"
+                    )
                 return "".join(lines)
             if _BARE_PROMPT_RE.match(text):
                 # artifact of a SIGINT received while M2 waited for input
                 continue
-            lines.append(text)
+            if not overflowed:
+                total += len(text)
+                if total > MAX_BLOCK_BYTES:
+                    overflowed = True
+                    logger.warning(
+                        "evaluation block exceeded %d bytes; discarding the remainder",
+                        MAX_BLOCK_BYTES,
+                    )
+                    continue
+                lines.append(text)
+
+    async def _resync_if_needed(self) -> None:
+        """Consume stale output left unread by a cancelled evaluation.
+
+        When :meth:`_attempt` is cancelled it SIGINTs M2 and records the
+        in-flight marker; M2 still prints the interrupted block and the
+        marker echo. Reading until that marker removes the stale text so the
+        *next* evaluation never sees the previous one's output. If the stale
+        marker never arrives (a computation ignoring SIGINT), the kernel is
+        killed and restarted — session state is lost in that rare fallback.
+
+        Used by :meth:`evaluate` right after :meth:`ensure_started`.
+        """
+        marker = self._pending_marker
+        if marker is None:
+            return
+        self._pending_marker = None
+        marker_re = re.compile(rf"\b{re.escape(marker)}\)[ \t]*\r?$")
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + RESYNC_TIMEOUT_S
+        logger.debug("draining stale output up to marker %s", marker)
+        try:
+            while True:
+                text = await self._read_line(deadline)
+                if marker_re.search(text):
+                    return
+        except (asyncio.TimeoutError, KernelCrashed) as exc:
+            logger.warning("post-cancel resync failed (%s); restarting kernel", exc)
+            await self._kill()
+            await self._start()
 
     async def _send_and_wait(self, code: str, marker: str, timeout_s: float) -> str:
         """Send ``code`` followed by the marker statement.
 
-        Returns the block printed before the marker's echo. Raises
-        asyncio.TimeoutError or KernelCrashed.
+        Used by :meth:`_attempt` (the only sender of user code). Returns the
+        block printed before the marker's echo. Raises asyncio.TimeoutError
+        or KernelCrashed.
         """
         payload = (code + "\n" + self._marker_stmt(marker) + "\n").encode("utf-8")
         return await self._marker_handshake(marker, timeout_s, write=payload)
@@ -398,6 +513,7 @@ class M2Session:
         async with self._lock:
             try:
                 await self.ensure_started()
+                await self._resync_if_needed()
             except (M2NotFoundError, UnsupportedM2Version, M2StartupError) as exc:
                 return EvalResult(output=f"ERROR: {exc}")
             code = code.strip("\n")
@@ -416,7 +532,15 @@ class M2Session:
             return await self._evaluate_whole(code, timeout_s)
 
     async def _attempt(self, code: str, timeout_s: int) -> tuple[str | None, EvalResult | None]:
-        """Send one submission and wait for its marker handshake.
+        """Send ONE submission and wait for its marker handshake.
+
+        The single point where the kernel is marked busy (so ``interrupt()``
+        only signals during real computations) and where every failure mode
+        of a submission is translated: timeout/crash here return a final
+        EvalResult (the kernel is restarted by ``_kill``), a client
+        cancellation records the in-flight marker for
+        :meth:`_resync_if_needed` and re-raises. Used by both
+        ``_evaluate_whole`` (one call) and ``_evaluate_stopping`` (per chunk).
 
         Returns (block, None) on success, or (None, EvalResult) when a
         timeout/crash path already produced the final result.
@@ -428,7 +552,9 @@ class M2Session:
             block = await self._send_and_wait(code, marker, timeout_s)
         except asyncio.CancelledError:
             # The client cancelled this call: ask M2 to stop too (graceful,
-            # keeps state) and let the cancellation propagate.
+            # keeps state) and remember the marker so the next call drains
+            # the stale output before evaluating anything new.
+            self._pending_marker = marker
             self.interrupt()
             raise
         except asyncio.TimeoutError:
@@ -453,7 +579,14 @@ class M2Session:
         return block, None
 
     async def _finalize_block(self, block: str) -> EvalResult:
-        """Post-process a successful continue-mode block."""
+        """Turn one raw marker-delimited block into the caller's EvalResult.
+
+        Used by the continue-mode path (``_evaluate_whole``) after a
+        successful send. Detects the two in-band events — a
+        desynchronizing ``syntax error`` (restarts the kernel: an unbalanced
+        parse may have swallowed the marker) and ``error: interrupted`` from
+        m2_interrupt — and normalizes empty output. Never raises.
+        """
         # stderr is merged into the stream, so M2's error text is already in
         # `block`, in true stream order.
         if "syntax error" in block:
@@ -492,6 +625,11 @@ class M2Session:
         )
 
     async def _evaluate_whole(self, code: str, timeout_s: int) -> EvalResult:
+        """REPL semantics (default): submit everything as ONE input.
+
+        An error in one line does not stop later lines (M2's own behavior);
+        used by ``evaluate`` when ``stop_on_error`` is False.
+        """
         block, early = await self._attempt(code, timeout_s)
         if early is not None:
             return early
@@ -499,6 +637,13 @@ class M2Session:
         return await self._finalize_block(block)
 
     async def _evaluate_stopping(self, code: str, timeout_s: int) -> EvalResult:
+        """Halting semantics: split into logical inputs, send one at a time,
+        stop at the first error and report how many inputs were not sent.
+
+        Each chunk gets the FULL ``timeout_s`` (the budget is per input, so
+        a long block can take up to len(chunks) x timeout). Used by
+        ``evaluate`` when ``stop_on_error`` is True.
+        """
         chunks = split_logical_inputs(code)
         if not chunks:
             return EvalResult(output="(empty input; nothing was evaluated)")

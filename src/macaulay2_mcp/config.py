@@ -148,8 +148,13 @@ def load_config() -> M2Config:
 
 
 def clamp_timeout(timeout_s: float) -> int:
+    """Coerce any JSON-supplied number into [1, MAX_TIMEOUT_S].
+
+    Garbage (None, "abc", nan, inf) falls back to DEFAULT_TIMEOUT_S rather
+    than raising: the MCP boundary must not crash on a malformed argument.
+    """
     try:
         value = int(timeout_s)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return DEFAULT_TIMEOUT_S
     return max(1, min(value, MAX_TIMEOUT_S))

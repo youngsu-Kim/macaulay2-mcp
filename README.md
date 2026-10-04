@@ -147,7 +147,34 @@ The server keeps one Macaulay2 kernel alive and sends your code to it, exactly l
 * **Unbalanced input** (e.g. a missing `}`) is rejected up front instead of hanging, and syntax errors that desynchronize the session trigger an automatic restart.
 * **OS-access gate.** M2 functions that run programs, touch the filesystem, reach the network, or kill the kernel (`runProgram`, `lines`, `openOut`, `makeDirectory`, `installPackage`, `quit`, …) are **refused before anything executes** — the session stays untouched and the message explains how the user can enable a specific symbol (`MACAULAY2_MCP_OS_ALLOW=lines,openOut` in the server's environment). The gate is friction against accidents, not a sandbox: M2's `value("...")` string-evaluation is not blocked (blocking it breaks legitimate metaprogramming). For real isolation, run the server in a container/VM.
 * **Audit journal.** Every MCP↔M2 exchange is appended to a JSONL file at `./.m2-mcp/session-<UTC>-<pid>.jsonl` in your project: the code, M2's output, timings, refused gate attempts, and the MCP client (LLM host) that connected. Relocate with `MACAULAY2_MCP_JOURNAL=<dir>`, disable with `=off`; for GUI clients a single central location is recommended, e.g. `~/.local/share/macaulay2-mcp/journals`. Add `.m2-mcp/` to your `.gitignore` (the server never reads it back in v0.1; checkpoint/replay is planned).
+* **Long results are excerpted.** A tool result past ~120 lines / 32 KB comes back as its first 100 and last 10 lines with a notice naming where the full text was saved (the journal); nothing is silently lost, and chats stay readable. Prefer narrowing in M2 (`take`, `drop`, smaller examples) over dumping huge results.
 * **Security.** This remains a local tool: your assistant can run arbitrary M2 computation on your machine. Both Claude Code and opencode ask for your approval per tool call by default — keep it that way.
+
+### The OS-access gate
+
+Why some perfectly normal-looking code is **blocked**: your assistant drives the
+Macaulay2 kernel with the same confidence it uses `betti res I` — and in plain
+M2, `lines "somefile"` reads any file *your user account* can read. The
+operating system grants that permission to you, and M2 inherits it silently:
+there is no per-call approval inside Macaulay2. A well-meaning suggestion like
+`print lines("~/.ssh/id_rsa")` needs no escalation at all; it simply works —
+unless something intervenes.
+
+That intervention — refusing OS-touching functions *before anything executes*
+— is a deliberate safeguard **added by this MCP server's author**, not by
+Macaulay2 or your client. It exists because the caller at the keyboard is
+often a language model, and language models make plausible-but-wrong choices
+at machine speed.
+
+One trade-off, stated honestly: the check inspects *words in code position*,
+not full program semantics (M2's function-application and higher-order syntax
+make "is this word really being *called*?" undecidable without a complete
+parser). Side effect: `lines`, `system`, and `quit` are also ordinary English
+nouns — so a harmless variable named `lines` (say, counting the 27 lines on a
+cubic surface) is refused too. Nothing runs in either case; rename the
+variable, or allowlist the symbol via `MACAULAY2_MCP_OS_ALLOW`. The gate
+remains friction against accidents, not a sandbox — for real isolation run
+the server in a container or VM.
 
 ## Design principles
 
@@ -224,7 +251,7 @@ The companion repo [`m2-mcp-binder`](https://github.com/youngsu-Kim/macaulay2-mc
 | A computation times out | Retry with a larger `timeout_s` (ask your assistant to), or write a script and use `m2_run_script`. To cancel a running computation while keeping session state, have the assistant call `m2_interrupt`. |
 | Something about an unbalanced `}` | Your (or the assistant's) code was missing a closing bracket — the error message says so; just fix and resend. |
 | A `.m2-mcp/` folder appeared in your project | That is the audit journal (every M2 exchange, one JSONL file per server run). Add it to `.gitignore`, relocate with `MACAULAY2_MCP_JOURNAL=<dir>`, or disable with `MACAULAY2_MCP_JOURNAL=off`. |
-| `BLOCKED: ... gatekeeper refuses '...'` | The assistant tried an M2 function that touches the OS (process/file/network). Nothing ran. If you trust the code, set `MACAULAY2_MCP_OS_ALLOW=<symbol>,<symbol>` in the server's environment and restart the client. |
+| `BLOCKED: ... gatekeeper refuses '...'` | The assistant tried an M2 function that touches the OS (process/file/network). Nothing ran. If the blocked word was meant as a plain variable (`lines = 27`), have the assistant rename it and retry — the gate matches words (see *The OS-access gate* above). If you trust the code, set `MACAULAY2_MCP_OS_ALLOW=<symbol>,<symbol>` in the server's environment and restart the client. |
 | Server won't start in a GUI app (LM Studio, Claude Desktop) | try plain `uvx` first (recent versions resolve your shell PATH); if it won't start, put the absolute path from `which uvx` in the `command` field. For LM Studio you can watch the server's log in the Program tab's server detail view. |
 | Running on Windows | v0.1 supports macOS and Ubuntu only; Windows is untested and unsupported. Open an issue if you need it — demand shapes the roadmap. |
 
