@@ -1,9 +1,8 @@
 # bench — host-local model grid (what models can actually drive this server)
 
-Companion to [`../e2e/`](../e2e/): e2e validates **the server** on macOS and
-Linux (Docker); bench measures **the model side of the conversation**, running
-entirely on the host — host opencode, host Ollama (Metal), host Macaulay2, this
-repo's server. No Docker anywhere.
+Bench measures **the model side of the conversation**, running entirely on the
+host — host opencode, host Ollama (Metal), host Macaulay2, this repo's server.
+No Docker anywhere. (The server side itself is pinned by `tests/` and CI.)
 
 ## The question
 

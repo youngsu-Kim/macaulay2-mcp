@@ -160,7 +160,7 @@ Behaviour (including the golden outputs) is pinned against Macaulay2 1.26 on:
 |---|---|---|
 | Development | Apple-silicon Mac, macOS 27 | — |
 | CI | GitHub Actions ubuntu-latest | 16 GB |
-| e2e / Binder demo | Container / hosted VM | Low single-digit GB, host-dependent |
+| Binder demo | Container / hosted VM | Low single-digit GB, host-dependent |
 
 ### The OS-access gate
 
@@ -283,9 +283,9 @@ Then enable the server in the Program tab, pick a **tool-calling-capable** model
 
 > Compute a Groebner basis of the ideal $I = (x^3 - y, x^4 - z)$ in $\mathbb{Q}[x,y,z]$ and print its elements.
 
-You should see a `m2_evaluate` tool call in the chat's tool activity, then the basis. Measured in our E2E and bench runs: small local models vary a lot at tool calling and at transcribing tables. The server provides built-in M2 idioms, error menus, and an auditable journal (LM Studio appears there as the connected client); these assist weaker models but do not make every model complete every task. If a computation is refused by the OS gate, the same `MACAULAY2_MCP_OS_ALLOW` env applies here.
+You should see a `m2_evaluate` tool call in the chat's tool activity, then the basis. Measured in our host benchmark grid: small local models vary a lot at tool calling and at transcribing tables. The server provides built-in M2 idioms, error menus, and an auditable journal (LM Studio appears there as the connected client); these assist weaker models but do not make every model complete every task. If a computation is refused by the OS gate, the same `MACAULAY2_MCP_OS_ALLOW` env applies here.
 
-> The install button and every `uvx macaulay2-mcp` command go live when the package is published to PyPI; until then, from a checkout you can point the `command` at `uv` with `--directory /path/to/m2_mcp_project` and `["run", "macaulay2-mcp"]` as a preview.
+> The install button and every `uvx macaulay2-mcp` command use the published PyPI package. To run a *working tree* instead (development preview), point the `command` at `uv` with `--directory /path/to/macaulay2-mcp` and `["run", "macaulay2-mcp"]`.
 
 ## Try it in your browser (no install)
 

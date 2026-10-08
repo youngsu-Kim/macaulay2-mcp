@@ -120,11 +120,12 @@ src/macaulay2_mcp/
   server.py    the 9 MCP tools + INSTRUCTIONS (LLM-facing, keep accurate)
   cli.py       entry point: server mode | selftest | --version
 tests/
+  test_units.py      pure-protocol units (parsers/masking; run without M2)
   test_kernel.py     protocol tests (skip if M2 1.26 missing)
   test_gatekeep.py   masking / enforcement / live blocking
   test_journal.py    journal units + live clientInfo-in-header round trip
   test_mcp_client.py client-level tests over stdio
-e2e/                 Docker + Ollama + opencode demo (opt-in: run_e2e.sh)
+bench/               host-local model benchmark grid (opencode + Ollama + M2)
 ```
 
 Personal (untracked) notes live in the gitignored `notes/` — including

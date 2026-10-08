@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Host-local model benchmark: opencode (host) + Ollama (Metal) + Macaulay2
-# (host brew) + this repo's server. No Docker (that stays e2e's job).
+# (host brew) + this repo's server. No Docker anywhere.
 #
 #   ./run_bench.sh                                  # defaults below
 #   MODELS="gemma4:e4b" ATTEMPTS=1 ./run_bench.sh  # subset / quick pass
