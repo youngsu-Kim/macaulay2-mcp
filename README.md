@@ -104,14 +104,14 @@ Self-test passed. The MCP server is ready to use.
 
 ## Try this now
 
-With the server connected, just ask (in Claude Code / opencode / ...). These are real tested prompts; the exact outputs are in [`examples/example-prompts.md`](examples/example-prompts.md):
+With the server connected, just ask (in Claude Code / opencode / ...). These are all real tested prompts; genuine transcripts of the core computation and of every server-behaviour feature (§2–8 there) are in [`examples/example-prompts.md`](examples/example-prompts.md):
 
 * “Create `R = QQ[x,y,z]` and `I = ideal(x^3 - y, x^4 - z)`. Compute the Groebner basis and a graded free resolution; show the Betti table.”
 * “What are the dimensions of `R` and of `R/I`?” *(→ `3` and `1`: the monomial curve is a curve)*
 * “Load the `BoijSoederberg` package and decompose the Betti diagram of `res I` into pure diagrams (`decomposeBetti`).”
 * “Look up the documentation for `hilbertPolynomial` and compute it for the twisted cubic `(x*z - y^2, y*w - z^2, x*w - y*z)`.” *(→ `3T + 1`. Note the lowercase `h`: M2's CamelCase doc pointer `HilbertPolynomial` is an empty stub.)*
 * “Compute the primary decomposition of `ideal(x^2, x*y)`.”
-* “Work through Macaulay2's official *Getting Started* examples — the rational quartic `monomialCurveIdeal(R,{1,3,4})`: dimension, degree, Hilbert polynomial, resolution, Betti table.” *(see [`examples/official-tutorial-run.md`](examples/official-tutorial-run.md))*
+* “Work through Macaulay2's official *Getting Started* examples — the rational quartic `monomialCurveIdeal(R,{1,3,4})`: dimension, degree, Hilbert polynomial, resolution, Betti table.” *(straight from the [tutorial itself](https://macaulay2.com/GettingStarted/); it works over MCP unchanged)*
 * “For the family `I_k = (x^(k+2) - y, x^(k+3) - z)` in `QQ[x,y,z]`, loop over `k = 1..6` and tabulate the reduced Groebner basis sizes and the dimensions of `R/I_k`.”
 * “Same family, but fan the work out across several subagents as independent batch jobs and collect the results.” *(real parallel M2 processes)*
 * “Here is my `mycode.m2` file — import it into the session and call `myFunction`.” (state is kept between calls)
@@ -119,6 +119,17 @@ With the server connected, just ask (in Claude Code / opencode / ...). These are
 A full genuine transcript of the first prompt: [`examples/groebner-demo.md`](examples/groebner-demo.md).
 
 Want to benchmark your own model the way a real user types math? [`examples/latex-decomposition-test.md`](examples/latex-decomposition-test.md) gives you two ready prompts, a rubric with known-true answers, and what we measured.
+
+### From your own code (no LLM required)
+
+The server is an ordinary MCP stdio process, so plain Python can drive the
+same persistent kernel: [`examples/drive_with_python.py`](examples/drive_with_python.py)
+(`uv run python examples/drive_with_python.py`) shows state surviving between
+separate tool calls, times each call client-side, and reports kernel memory
+two ways — the per-call resident/peak line and the on-demand `m2_memory()`
+tool, with a computation that visibly moves the peak. The Binder notebook in
+[*Try it in your browser*](#try-it-in-your-browser-no-install) uses the
+identical pattern inside Jupyter.
 
 ## What the server provides
 

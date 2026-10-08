@@ -40,3 +40,7 @@ lab-snapshot.yml
 
 # local model-benchmark outputs (CSV/logs are machine-local measurements)
 bench/results/
+
+# agent session exports / scratch graphs (local artifacts, never tracked)
+opencode_ses_*.json
+graph.dot

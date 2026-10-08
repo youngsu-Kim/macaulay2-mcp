@@ -7,8 +7,12 @@ Every transcript below was captured from a live `macaulay2` MCP session
 type them to Claude Code / opencode; the code blocks show what the server
 returned from `m2_evaluate` (M2's own rendering, input echoes included).
 
+Section 1 is core Macaulay2 via the tools; sections 2–8 are what only *this
+server* does: how errors, timeouts, interrupts, and parallel jobs actually
+present themselves to your assistant.
+
 Tip that shows up in all of these: **end statements with newlines, not
-semicolons** — M2 suppresses the printed result of any `statement;` (see §7).
+semicolons** — M2 suppresses the printed result of any `statement;` (see §2).
 
 ---
 
@@ -65,90 +69,23 @@ o6 : BettiTally
 Note the M2-1.26 idiom: `gb I` returns a `GroebnerBasis` object, so the basis
 polynomials are seen via `print generators (gb I)`. (This guidance is built
 into the server's instructions, so your assistant should already know it.)
+A longer single-call version of this exact task: [groebner-demo.md](groebner-demo.md).
 
-## 2. Dimensions — quick geometric sanity checks
-
-> What are the dimensions of `R` and of `R/I`?
-
-```
-i15 : dim R
-
-o15 = 3
-
-i16 : dim (R/I)
-
-o16 = 1
-```
-
-`R/I` is the monomial (3,4)-curve: dimension 1. Keep the parentheses —
-`dim R/I` parses differently in M2.
-
-## 3. Hilbert polynomial of the twisted cubic (via `m2_help` first)
-
-> Look up the documentation for `hilbertPolynomial` and compute it for the
-> twisted cubic `(x*z - y^2, y*w - z^2, x*w - y*z)`.
+## 2. The trailing-semicolon trap (why results sometimes "vanish")
 
 ```
-i16 : S = QQ[x,y,z,w]
+i26 : betti G;
 
-i17 : J = ideal(x*z - y^2, y*w - z^2, x*w - y*z)
-
-i18 : hilbertPolynomial J
-
-o18 = - 2*P  + 3*P
-           0      1
-
-o18 : ProjectiveHilbertPolynomial
+i27 : print "previous line produced NO output: M2 suppresses results of statements ending with a semicolon"
+previous line produced NO output: M2 suppresses results of statements ending with a semicolon
 ```
 
-`3P₁ − 2P₀` is M2's binomial-basis notation for `3T + 1` — degree 3, genus 0.
+M2 treats a trailing `;` as "don't print this result". This tripped the
+small local models in our host benchmark grid until the rule was written
+into the server's instructions. If a result seems missing, ask for it
+without `;` or with an explicit `print`.
 
-Gotcha: `help "HilbertPolynomial"` (CamelCase) is a dead doc pointer in 1.26
-— it returns an empty stub. Use the function's real name, `hilbertPolynomial`.
-The server surfaces the stub verbatim, so a quick `m2_help` retry finds the
-real page.
-
-## 4. Primary decomposition
-
-> Compute the primary decomposition of `ideal(x^2, x*y)`.
-
-```
-i24 : K = ideal(x^2, x*y)
-
-i25 : print primaryDecomposition K
-{ideal x, ideal (y, x )}
-                     2
-```
-
-i.e. `(x², xy) = (x) ∩ (x, y)²`. The `PrimaryDecomposition` package is
-preloaded in 1.26, so no loading needed (`m2_list_packages` shows what is
-available in the session; `m2_load_package` reports “already loaded” no-ops).
-
-## 5. Boij–Söderberg decomposition of a Betti diagram
-
-> Load the `BoijSoederberg` package and decompose the Betti diagram of
-> `res I` into pure diagrams (`decomposeBetti`).
-
-```
-i9 : R = QQ[x,y,z]
-
-i10 : I = ideal(x^3 - y, x^4 - z)
-
-i11 : decomposeBetti betti res I
-
-        1 /       0  1  2 3\     1 /       0  1  2 3\    2 /       0 1 2\
-o11 = (--)|total: 3 10 15 8| + (--)|total: 1 10 15 6| + (-)|total: 1 4 3|
-       10 |    0: 3  .  . .|    30 |    0: 1  .  . .|    3 |    0: 1 . .|
-          |    1: . 10  . .|       |    1: .  .  . .|      |    1: . . .|
-          \    2: .  . 15 8/       \    2: . 10 15 6/      \    2: . 4 3/
-
-o11 : Expression of class Sum
-```
-
-A positive rational combination of pure Betti diagrams — the Boij–Söderberg
-theorem made visible.
-
-## 6. Real M2 errors are surfaced, not swallowed
+## 3. Real M2 errors are surfaced, not swallowed
 
 > Compute the Hilbert polynomial of the (non-homogeneous!) ideal from §1.
 
@@ -159,24 +96,10 @@ stdio:14:17:(3):[1]: error: hilbertPolynomial: expected a homogeneous module
 
 The Groebner-basis ideal of §1 is *not* homogeneous in the standard grading
 (`x^3 - y` mixes degrees 3 and 1), so the Hilbert polynomial doesn't apply.
-The assistant sees exactly this message and can adjust (e.g. §3's homogeneous
-example, or use `betti` directly).
+The assistant sees exactly this message and can adjust (e.g. switch to a
+homogeneous ideal, or use `betti` directly).
 
-## 7. The trailing-semicolon trap (why results sometimes "vanish")
-
-```
-i26 : betti G;
-
-i27 : print "previous line produced NO output: M2 suppresses results of statements ending with a semicolon"
-previous line produced NO output: M2 suppresses results of statements ending with a semicolon
-```
-
-M2 treats a trailing `;` as "don't print this result". This tripped the
-small local models in our Docker E2E until the rule was written into the
-server's instructions. If a result seems missing, ask for it without `;` or
-with an explicit `print`.
-
-## 8. Timeouts are the server's guard, not M2's error
+## 4. Timeouts are the server's guard, not M2's error
 
 > Compute something heavy (here: an infinite loop) with a 3-second limit.
 
@@ -200,7 +123,7 @@ setup (ring/ideal definitions) in the same code block.
 Right after the timeout, the session is healthy again (`1 + 1` → `2`), but
 empty by design — retries must be self-contained.
 
-## 9. Stopping a running computation (m2_interrupt)
+## 5. Stopping a running computation (m2_interrupt)
 
 > That computation is taking too long — cancel it.
 
@@ -227,17 +150,17 @@ and the waiting `m2_evaluate` call completes gracefully:
 i6 : while true do()
 stdio:6:6:(3):[1]: error: interrupted
 
-NOTE: the computation was stopped on request (m2_interrupt). Everything
+NOTE(macaulay2-mcp): the computation was stopped on request (m2_interrupt). Everything
 defined by statements that completed before the interrupted one is still
 available; the session is ready for new input.
 ```
 
 Crucially, **nothing was lost** — `keepMe = 99` defined before the runaway
-loop still evaluates to `99` in the same session. Contrast with §8: a
+loop still evaluates to `99` in the same session. Contrast with §4: a
 *timeout* kills and restarts the kernel (state gone); an *interrupt* aborts
 only the current statement (state kept).
 
-## 10. A family of ideals indexed by k (loops)
+## 6. A family of ideals indexed by k (loops)
 
 > For the family `I_k = (x^(k+2) - y, x^(k+3) - z)` in `QQ[x,y,z]`, loop over
 > `k = 1..6` and tabulate the reduced Groebner basis sizes and the dimensions
@@ -257,28 +180,6 @@ o = {(1, 4, 1), (2, 5, 1), (3, 6, 1), (4, 7, 1), (5, 8, 1), (6, 9, 1)}
 (The Groebner basis gains one generator per step; the quotient stays a curve.
 This exact output is pinned in the golden regression dataset.)
 
-**Style B — display per-k tables** (`scan` + explicit `print`):
-
-```
-scan({1, 2}, k -> (J := ideal(x^(k+2) - y, x^(k+3) - z); print k; print betti res J))
-```
-
-```
-1
-       0 1 2 3
-total: 1 4 4 1
-    0: 1 . . .
-    1: . 1 . .
-    2: . 3 4 1
-2
-       0 1 2 3
-total: 1 5 6 2
-    0: 1 . . .
-    1: . 1 . .
-    2: . . . .
-    3: . 4 6 2
-```
-
 **Beginner traps this exercises** (all verified on M2 1.26.06, and encoded in
 the server's instructions so your assistant avoids them):
 
@@ -291,7 +192,7 @@ the server's instructions so your assistant avoids them):
 * `print a | b` is `(print a) | b` — parenthesize concatenations:
   `print (a | b)`.
 
-## 11. Parallel batch jobs, fanned out across subagents
+## 7. Parallel batch jobs, fanned out across subagents
 
 > Same family, k = 1..6, but split the work across three subagents, each
 > running its own slice as an isolated `m2_run_script` job.
@@ -300,8 +201,8 @@ the server's instructions so your assistant avoids them):
 design). For independent heavy work, each `m2_run_script` call spawns **its
 own M2 process** — so N concurrent jobs = genuine N-way parallelism.
 
-Genuine run: three parallel subagents, each given one slice file, e.g.
-`/tmp/m2-demo/slice1.m2`:
+Genuine run: three parallel subagents, each given one self-contained slice
+file, e.g.:
 
 ```
 -- job slice: k = 1, 2 of the family I_k = (x^(k+2) - y, x^(k+3) - z) in QQ[x,y,z]
@@ -313,9 +214,7 @@ for k from 1 to 2 list (
 ```
 
 Each subagent simply runs `m2_run_script(path=...)` on its file; the
-orchestrator collects the three results (one M2 process per job, run
-concurrently — transcripts below from a real three-subagent fan-out; the
-trailing batch prompt is stripped in the current build):
+orchestrator collects the three results:
 
 ```
 SLICE 1 RESULT:  k=1 gbGens=4 dim=1   k=2 gbGens=5 dim=1
@@ -323,31 +222,23 @@ SLICE 2 RESULT:  k=3 gbGens=6 dim=1   k=4 gbGens=7 dim=1
 SLICE 3 RESULT:  k=5 gbGens=8 dim=1   k=6 gbGens=9 dim=1
 ```
 
-— matching §10's single-loop answer exactly.
+— matching §6's single-loop answer exactly.
 
 Notes:
 
-* Slices are self-contained (batch jobs share no state) — include all setup
-  in every script.
 * The host decides the fan-out: parallel tool calls in one turn, or
   subagents (opencode `task` / Claude Code subagents). Both hammer the same
-  concurrency-safe server.
-* Tests pin the two halves of this story: concurrent `m2_evaluate` requests
-  return correctly paired results (serialization safety), and concurrent
-  `m2_run_script` jobs all return correct output (parallel existence). No
-  timing claims anywhere.
-* Footnote: M2 also has an in-kernel `parallelApply`; this project steers
-  beginners toward job-level parallelism, and first-class job handles
-  (`m2_submit_job` / status / wait / cancel over a kernel pool) are planned
-  for a later version.
+  concurrency-safe server. Tests pin both halves of the story (serialized
+  `m2_evaluate`, parallel `m2_run_script`) — outputs only, never timings.
+* First-class job handles (`m2_submit_job` / status / wait / cancel over a
+  kernel pool) are planned for a later version.
 
-## 12. Error handling: cascades, halts, and choosing the recovery
+## 8. Error handling: cascades, halts, and choosing the recovery
 
 > Define `sBefore = 7`, compute something that fails, then `sAfter`.
 
 Default (REPL) semantics — M2 **keeps running** after the error, and the
-server appends the options menu instead of deciding for you (genuine
-transcript, server 0.1.0):
+server appends the options menu instead of deciding for you:
 
 ```
 i2 : sBefore = 7
