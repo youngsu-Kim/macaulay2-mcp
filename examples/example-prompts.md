@@ -7,16 +7,13 @@ Every transcript below was captured from a live `macaulay2` MCP session
 type them to Claude Code / opencode; the code blocks show what the server
 returned from `m2_evaluate` (M2's own rendering, input echoes included).
 
-Section 1 is core Macaulay2 via the tools; sections 2–8 are what only *this
-server* does: how errors, timeouts, interrupts, and parallel jobs actually
-present themselves to your assistant.
-
-Tip that shows up in all of these: **end statements with newlines, not
-semicolons** — M2 suppresses the printed result of any `statement;` (see §2).
+Section 1 is core Macaulay2 through the tools; sections 2–5 are what only
+*this server* does: how long runs, stops, big batches, and failures actually
+present themselves to you and your assistant.
 
 ---
 
-## 1. Groebner basis, resolution, Betti table
+## 1. Your first computation: Groebner basis, resolution, Betti table
 
 > Create `R = QQ[x,y,z]` and `I = ideal(x^3 - y, x^4 - z)`. Compute the
 > Groebner basis and a graded free resolution; show the Betti table.
@@ -66,40 +63,12 @@ o6 = total: 1 4 4 1
 o6 : BettiTally
 ```
 
-Note the M2-1.26 idiom: `gb I` returns a `GroebnerBasis` object, so the basis
-polynomials are seen via `print generators (gb I)`. (This guidance is built
-into the server's instructions, so your assistant should already know it.)
-A longer single-call version of this exact task: [groebner-demo.md](groebner-demo.md).
+Five statements, one call, genuine M2 output. (The `gb`-is-an-object idiom
+and friends are built into the server's instructions, so your assistant
+already speaks them.) A longer single-call transcript of this exact task:
+[groebner-demo.md](groebner-demo.md).
 
-## 2. The trailing-semicolon trap (why results sometimes "vanish")
-
-```
-i26 : betti G;
-
-i27 : print "previous line produced NO output: M2 suppresses results of statements ending with a semicolon"
-previous line produced NO output: M2 suppresses results of statements ending with a semicolon
-```
-
-M2 treats a trailing `;` as "don't print this result". This tripped the
-small local models in our host benchmark grid until the rule was written
-into the server's instructions. If a result seems missing, ask for it
-without `;` or with an explicit `print`.
-
-## 3. Real M2 errors are surfaced, not swallowed
-
-> Compute the Hilbert polynomial of the (non-homogeneous!) ideal from §1.
-
-```
-i14 : hilbertPolynomial coker gens I
-stdio:14:17:(3):[1]: error: hilbertPolynomial: expected a homogeneous module
-```
-
-The Groebner-basis ideal of §1 is *not* homogeneous in the standard grading
-(`x^3 - y` mixes degrees 3 and 1), so the Hilbert polynomial doesn't apply.
-The assistant sees exactly this message and can adjust (e.g. switch to a
-homogeneous ideal, or use `betti` directly).
-
-## 4. Timeouts are the server's guard, not M2's error
+## 2. The safety net on long runs
 
 > Compute something heavy (here: an infinite loop) with a 3-second limit.
 
@@ -120,16 +89,15 @@ larger timeout, e.g. m2_evaluate(<code>, timeout_s=600), and include all
 setup (ring/ideal definitions) in the same code block.
 ```
 
-Right after the timeout, the session is healthy again (`1 + 1` → `2`), but
+Right after the timeout the session is healthy again (`1 + 1` → `2`), but
 empty by design — retries must be self-contained.
 
-## 5. Stopping a running computation (m2_interrupt)
+## 3. Stop a runaway without losing anything
 
 > That computation is taking too long — cancel it.
 
-The assistant calls `m2_interrupt` *while the runaway `m2_evaluate` is still
-in flight* (two concurrent requests on one connection; the interrupt is
-lock-free by design):
+The assistant calls `m2_interrupt` while the runaway evaluation is still in
+flight:
 
 ```
 m2_evaluate("while true do()", timeout_s=60)      <- still running...
@@ -144,7 +112,7 @@ m2_evaluate will return shortly with an 'error: interrupted' note and the
 session keeps all earlier definitions.
 ```
 
-and the waiting `m2_evaluate` call completes gracefully:
+and the waiting call completes gracefully:
 
 ```
 i6 : while true do()
@@ -156,18 +124,16 @@ available; the session is ready for new input.
 ```
 
 Crucially, **nothing was lost** — `keepMe = 99` defined before the runaway
-loop still evaluates to `99` in the same session. Contrast with §4: a
-*timeout* kills and restarts the kernel (state gone); an *interrupt* aborts
-only the current statement (state kept).
+loop still evaluates to `99`. So: a *timeout* (§2) restarts the kernel and
+clears state; an *interrupt* stops only the current statement and keeps it.
 
-## 6. A family of ideals indexed by k (loops)
+## 4. A family of computations — in a loop, or truly in parallel
 
-> For the family `I_k = (x^(k+2) - y, x^(k+3) - z)` in `QQ[x,y,z]`, loop over
-> `k = 1..6` and tabulate the reduced Groebner basis sizes and the dimensions
-> of `R/I_k`.
+> For the family `I_k = (x^(k+2) - y, x^(k+3) - z)` in `QQ[x,y,z]`, tabulate
+> the reduced Groebner basis sizes and the dimensions of `R/I_k` for
+> `k = 1..6`.
 
-**Style A — collect invariants** (`for ... list` returns a list; `:=` scopes
-`J` locally per iteration):
+**In one session**, a loop suffices:
 
 ```
 for k from 1 to 6 list (J := ideal(x^(k+2) - y, x^(k+3) - z); (k, #flatten entries generators gb J, dim (R/J)))
@@ -177,35 +143,13 @@ for k from 1 to 6 list (J := ideal(x^(k+2) - y, x^(k+3) - z); (k, #flatten entri
 o = {(1, 4, 1), (2, 5, 1), (3, 6, 1), (4, 7, 1), (5, 8, 1), (6, 9, 1)}
 ```
 
-(The Groebner basis gains one generator per step; the quotient stays a curve.
-This exact output is pinned in the golden regression dataset.)
-
-**Beginner traps this exercises** (all verified on M2 1.26.06, and encoded in
-the server's instructions so your assistant avoids them):
-
-* `I_k = ...` defines ONE symbol literally named `I_k` — underscore is a name
-  character, not indexing. Make `k` a function parameter:
-  `I = k -> ideal(x^(k+2) - y, x^(k+3) - z)`, then call `I 3` or `I(k)`.
-* Inside a loop body, `J := ...` scopes locally per iteration; a bare `J = ...`
-  would overwrite a global.
-* `dim (R/J)` needs the parentheses: `dim R/J` parses differently.
-* `print a | b` is `(print a) | b` — parenthesize concatenations:
-  `print (a | b)`.
-
-## 7. Parallel batch jobs, fanned out across subagents
-
-> Same family, k = 1..6, but split the work across three subagents, each
-> running its own slice as an isolated `m2_run_script` job.
-
-`m2_evaluate` uses one shared kernel (state cooperation, serialized by
-design). For independent heavy work, each `m2_run_script` call spawns **its
-own M2 process** — so N concurrent jobs = genuine N-way parallelism.
-
-Genuine run: three parallel subagents, each given one self-contained slice
-file, e.g.:
+**For heavy families**, ask for it "as independent batch jobs" instead: each
+`m2_run_script` call spawns its own M2 process, so three subagents slicing
+`k = 1..6` is genuine 3-way parallelism. Genuine run — each subagent's slice
+is a small self-contained script like:
 
 ```
--- job slice: k = 1, 2 of the family I_k = (x^(k+2) - y, x^(k+3) - z) in QQ[x,y,z]
+-- job slice: k = 1, 2 of the family
 R = QQ[x,y,z]
 for k from 1 to 2 list (
     J := ideal(x^(k+2) - y, x^(k+3) - z);
@@ -213,8 +157,7 @@ for k from 1 to 2 list (
 )
 ```
 
-Each subagent simply runs `m2_run_script(path=...)` on its file; the
-orchestrator collects the three results:
+and the orchestrator collects:
 
 ```
 SLICE 1 RESULT:  k=1 gbGens=4 dim=1   k=2 gbGens=5 dim=1
@@ -222,31 +165,31 @@ SLICE 2 RESULT:  k=3 gbGens=6 dim=1   k=4 gbGens=7 dim=1
 SLICE 3 RESULT:  k=5 gbGens=8 dim=1   k=6 gbGens=9 dim=1
 ```
 
-— matching §6's single-loop answer exactly.
+— matching the loop answer exactly. Your assistant makes this happen with the
+client's own fan-out (parallel tool calls or subagents); the server is
+concurrency-safe by design: session calls serialize on one kernel, batch jobs
+each get their own process.
 
-Notes:
+## 5. When something goes wrong
 
-* The host decides the fan-out: parallel tool calls in one turn, or
-  subagents (opencode `task` / Claude Code subagents). Both hammer the same
-  concurrency-safe server. Tests pin both halves of the story (serialized
-  `m2_evaluate`, parallel `m2_run_script`) — outputs only, never timings.
-* First-class job handles (`m2_submit_job` / status / wait / cancel over a
-  kernel pool) are planned for a later version.
+Real M2 errors arrive **verbatim**, not swallowed:
 
-## 8. Error handling: cascades, halts, and choosing the recovery
-
-> Define `sBefore = 7`, compute something that fails, then `sAfter`.
-
-Default (REPL) semantics — M2 **keeps running** after the error, and the
-server appends the options menu instead of deciding for you:
+> Compute the Hilbert polynomial of the (non-homogeneous!) ideal from §1.
 
 ```
-i2 : sBefore = 7
-o2 = 7
+i14 : hilbertPolynomial coker gens I
+stdio:14:17:(3):[1]: error: hilbertPolynomial: expected a homogeneous module
+```
+
+Your assistant sees exactly this message and can adjust (`x^3 - y` mixes
+degrees, so the Hilbert polynomial doesn't apply — a homogeneous example
+would). And when a multi-statement run hits an error mid-way, M2 being a
+REPL means later statements still ran; the server then appends the options
+instead of choosing for you:
+
+```
 i3 : noSuchFn(1)
 stdio:3:8:(3):[1]: error: no method for adjacent objects: ...
-i4 : sAfter = sBefore + 1
-o4 = 8
 
 NOTE(macaulay2-mcp): M2 reports an error above, but as a REPL, it did NOT
 halt — inputs after the failing line already ran (possibly on broken
@@ -258,34 +201,7 @@ to proceed:
   (3) INSPECT — evaluate the affected names first ...
 ```
 
-The same block with `stop_on_error=True` — everything after the error is
-never executed (note `p2` stays undefined afterwards):
-
-```
-m2_evaluate("p1 = 1\nnoSuchFn(9)\np2 = p1 + 1\np3 = p1 + 2",
-            stop_on_error=True)
-```
-
-```
-i8 : p1 = 1
-o8 = 1
-i10 : noSuchFn(9)
-stdio:10:8:(3):[1]: error: no method for adjacent objects: ...
-
-NOTE(macaulay2-mcp): the run halted at the failing input (stop_on_error):
-2 later input(s) were NOT executed. M2 has no rollback, so the failing
-line's earlier statements took effect ... Before retrying, ask the user ...
-```
-
-```
-m2_evaluate("p2")  →  o12 = p2 : Symbol     ← never assigned
-```
-
-Semantics worth knowing, all pinned by golden tests:
-
-* No rollback even *within* a line: `x = 2; bogusFn(x)` leaves `x = 2`
-  defined after erroring (golden `partial_input_effect`).
-* `stop_on_error` requires self-contained lines (splitting happens at
-  top-level newlines; don't break a line after a binary operator).
-* `m2_run_script` is the opposite by design: batch mode with M2's `--stop`
-  halts at the first error.
+So the recovery decision stays with **you**; your assistant relays the
+options. If you'd rather nothing run after the first error, ask for the code
+to be sent with `stop_on_error=True` — the run then halts at the failing
+statement and later lines never execute.

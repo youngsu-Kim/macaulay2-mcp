@@ -104,7 +104,7 @@ Self-test passed. The MCP server is ready to use.
 
 ## Try this now
 
-With the server connected, just ask (in Claude Code / opencode / ...). These are all real tested prompts; genuine transcripts of the core computation and of every server-behaviour feature (§2–8 there) are in [`examples/example-prompts.md`](examples/example-prompts.md):
+With the server connected, just ask (in Claude Code / opencode / ...). These are all real tested prompts; genuine transcripts of the core computation and of every server-behaviour feature (§§2–5 there) are in [`examples/example-prompts.md`](examples/example-prompts.md):
 
 * “Create `R = QQ[x,y,z]` and `I = ideal(x^3 - y, x^4 - z)`. Compute the Groebner basis and a graded free resolution; show the Betti table.”
 * “What are the dimensions of `R` and of `R/I`?” *(→ `3` and `1`: the monomial curve is a curve)*
