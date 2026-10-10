@@ -16,6 +16,10 @@ uv run macaulay2-mcp selftest# one-command install verification
 uv run macaulay2-mcp         # run the MCP server on stdio
 ```
 
+To point an MCP *client* at this checkout instead of the published package
+(working-tree preview): `command: "uv"`,
+`args: ["--directory", "/path/to/macaulay2-mcp", "run", "macaulay2-mcp"]`.
+
 ## Hard constraints (do not break)
 
 1. **Stdio discipline:** when running as an MCP server, stdout carries the
@@ -125,6 +129,7 @@ tests/
   test_gatekeep.py   masking / enforcement / live blocking
   test_journal.py    journal units + live clientInfo-in-header round trip
   test_mcp_client.py client-level tests over stdio
+docs/                reference deep-dives linked from README (gate rationale, journal guide, troubleshooting)
 bench/               host-local model benchmark grid (opencode + Ollama + M2)
 ```
 
