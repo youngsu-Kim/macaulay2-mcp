@@ -25,6 +25,8 @@ Use [Macaulay2](https://macaulay2.com) from your AI coding assistant.
 
 Three notations, one kernel — raw M2 syntax, plain English, LaTeX. Each ask is self-contained (paste any one into a fresh session), and the trailing memory line is genuine output (every `m2_evaluate` result ends with the kernel's resident/peak):
 
+![macaulay2-mcp in a real opencode v2 session — 40 s, three README examples run live](https://github.com/user-attachments/assets/570d928c-f2bd-4f6e-aa6c-eb07439b83c3)
+
 ```text
 you   > compute the Groebner basis of ideal(x^3 - y, x^4 - z) in QQ[x,y,z]
 AI    > m2_evaluate: R = QQ[x,y,z]; I = ideal(x^3 - y, x^4 - z)
