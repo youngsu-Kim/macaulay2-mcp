@@ -70,3 +70,10 @@ o8 : BettiTally
 > {xy - z, x^2z - y^2, y^3 - xz^2, x^3 - y}.
 > A graded free resolution has total Betti numbers (1, 4, 4, 1):
 > 1 generator in degree 0, 4 syzygies starting in degrees 1 and 2.
+
+Footnote (2026-10-10): `I = (x^3 - y, x^4 - z)` is not homogeneous, so the
+table above — exactly what M2 printed — is a valid resolution but not a
+certified *minimal graded* one; careful models may (correctly) caveat it.
+The README's Introduction asks for Betti tables only of homogeneous ideals
+for precisely this reason — see Case study 2 in
+[`latex-decomposition-test.md`](latex-decomposition-test.md).

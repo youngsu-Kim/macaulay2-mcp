@@ -68,6 +68,15 @@ and friends are built into the server's instructions, so your assistant
 already speaks them.) A longer single-call transcript of this exact task:
 [groebner-demo.md](groebner-demo.md).
 
+> Careful-reader note (added 2026-10-10, transcript left exactly as
+> captured): the prompt says "graded free resolution", but
+> `I = (x^3 - y, x^4 - z)` is *not homogeneous* — the table shown, which is
+> precisely what M2 printed, is a valid resolution but not a certified
+> minimal graded one, and a wary model may say so (it would be right; see
+> Case study 2 in [`latex-decomposition-test.md`](latex-decomposition-test.md)).
+> The README's Introduction asks for Betti tables only of homogeneous
+> ideals.
+
 ## 2. The safety net on long runs
 
 > Compute something heavy (here: an infinite loop) with a 3-second limit.

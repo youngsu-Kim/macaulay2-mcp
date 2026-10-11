@@ -6,8 +6,8 @@ As a default, the MCP server keeps the history (journal) in a file — an
 append-only log of every exchange: one JSON Lines file per server run, one
 JSON object per line. It lands in `.m2-mcp/` in the working directory of the
 app that started the server; relocate it with `MACAULAY2_MCP_JOURNAL=<dir>`
-or turn it off with `=off` (the LM Studio entry in the README's 30-second
-setup, for instance, pins it to `~/.local/share/macaulay2-mcp/journals/`).
+or turn it off with `=off` (the LM Studio entry in the README's Installation
+section, for instance, pins it to `~/.local/share/macaulay2-mcp/journals/`).
 
 Why it exists: when an AI assistant computes on your behalf, "what exactly
 ran, and what came back?" deserves an answer that outlives the chat
