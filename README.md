@@ -152,7 +152,7 @@ A full genuine transcript of the first prompt's Groebner/resolution ask: [`examp
 
 Want to benchmark your own model the way a real user types math? [`examples/latex-decomposition-test.md`](examples/latex-decomposition-test.md) gives you two ready prompts, a rubric with known-true answers, and what we measured.
 
-The companion [macaulay2-skills](https://github.com/youngsu-Kim/macaulay2-skills) repo ships machine-verified M2 1.26 know-how as an Agent Skill (`npx skills add youngsu-Kim/macaulay2-skills`) — it pairs with this server but is not bound to it, and installs into Claude Code, OpenCode, or LM Studio. Measured here with a thinking-disabled model: the three Introduction examples went from ~22 kernel calls (8 error/retry events) to 3–8 calls and zero errors; its FINDINGS.md carries the full four-thinking-level grid.
+The companion [macaulay2-skills](https://github.com/youngsu-Kim/macaulay2-skills) repo ships machine-verified M2 1.26 know-how as an Agent Skill (`npx skills add youngsu-Kim/macaulay2-skills`) — it pairs with this server but is not bound to it, and installs into Claude Code, OpenCode, or LM Studio. Measured here on the three Introduction examples: a thinking-disabled model went from ~22 kernel calls with 8 error/retry events to 5 clean calls, and across all four thinking levels the skill held 3–8 calls with zero errors; its FINDINGS.md carries the full grid.
 
 ### From your own code (no LLM required)
 
