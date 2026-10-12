@@ -142,6 +142,8 @@ plainly — don't invent an answer.
 
 With the server connected, just ask (in Claude Code / opencode / ...). All of these are tested prompts:
 
+For a model that struggles with M2's dialect, prepend one line to any prompt below: *"Read the Macaulay2 skill at <https://github.com/youngsu-Kim/macaulay2-skills> (`skills/macaulay2/SKILL.md`) and follow it before executing."* Agents that installed the skill via `npx skills add youngsu-Kim/macaulay2-skills` do this without being told — see its FINDINGS.md for the measured effect across five model families.
+
 * “Create `R = QQ[x,y,z]` and `I = ideal(x^3 - y, x^4 - z)`. Compute the Groebner basis and a free resolution; show the Betti table, and the dimensions of `R` and `R/I`.” *(→ basis `xy - z, x^2 z - y^2, y^3 - x z^2, x^3 - y`; M2 prints totals `1 4 4 1`; dims `3` and `1` — the monomial curve is a curve)*
 * “Use M2's own library: load the `BoijSoederberg` package and decompose the Betti diagram of `res I` into pure diagrams (`decomposeBetti`); also look up `hilbertPolynomial` and compute it for the twisted cubic `(x*z - y^2, y*w - z^2, x*w - y*z)`.” *(→ a positive sum of 3 pure diagrams; `3T + 1`, printed `- 2*P₀ + 3*P₁`. Note the lowercase `h`: M2's CamelCase doc pointer `HilbertPolynomial` is an empty stub.)*
 * “Compute the primary decomposition of `ideal(x^2, x*y)`. Then work through Macaulay2's official *Getting Started* example — the rational quartic `monomialCurveIdeal(R,{1,3,4})`: dimension, degree, Hilbert polynomial, resolution, Betti table.” *(→ `(x) ∩ (x², y)`; quartic: degree 4, Hilbert `4T + 1`, totals (1, 4, 4, 1) — straight from the [tutorial itself](https://macaulay2.com/GettingStarted/); it works over MCP unchanged)*
@@ -152,7 +154,7 @@ A full genuine transcript of the first prompt's Groebner/resolution ask: [`examp
 
 Want to benchmark your own model the way a real user types math? [`examples/latex-decomposition-test.md`](examples/latex-decomposition-test.md) gives you two ready prompts, a rubric with known-true answers, and what we measured.
 
-The companion [macaulay2-skills](https://github.com/youngsu-Kim/macaulay2-skills) repo ships machine-verified M2 1.26 know-how as an Agent Skill (`npx skills add youngsu-Kim/macaulay2-skills`) — it pairs with this server but is not bound to it, and installs into Claude Code, OpenCode, or LM Studio. Measured here on the three Introduction examples: a thinking-disabled model went from ~22 kernel calls with 8 error/retry events to 5 clean calls, and across all four thinking levels the skill held 3–8 calls with zero errors; its FINDINGS.md carries the full grid.
+The companion [macaulay2-skills](https://github.com/youngsu-Kim/macaulay2-skills) repo ships machine-verified M2 1.26 know-how as an Agent Skill (`npx skills add youngsu-Kim/macaulay2-skills`) — it pairs with this server but is not bound to it, and installs into Claude Code, OpenCode, or LM Studio. Measured here on the three Introduction examples: a thinking-disabled model went from ~22 kernel calls with 8 error/retry events to 5 clean calls, and across all four thinking levels the skill held 3–8 calls with zero errors; its FINDINGS.md carries the full grid. The result generalized to five more model configurations (qwen3-small, DeepSeek-V4-Flash, GLM-5, Kimi, GPT-OSS): 3–5 clean calls each, 32 of 33 graded subanswers correct — the single miss (reading the Hilbert class form `-2*P₀ + 3*P₁`, by GPT-OSS) became the skill's trap #17 — and globally installed sessions discover the skill with no pointer at all.
 
 ### From your own code (no LLM required)
 

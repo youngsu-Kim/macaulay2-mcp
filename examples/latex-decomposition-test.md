@@ -15,6 +15,13 @@ What the test separates three distinct skills:
 
 ## The prompts (copy-paste into your MCP client)
 
+> Optional, for weaker models: prepend *"Read the Macaulay2 skill at
+> <https://github.com/youngsu-Kim/macaulay2-skills>
+> (`skills/macaulay2/SKILL.md`) and follow it before executing."* The
+> measured results below are the **no-skill baseline** — with the skill
+> available, agents in that repo's five-family benchmark needed markedly
+> fewer calls and error cycles.
+
 ### Prompt A — raw
 
 ```text
