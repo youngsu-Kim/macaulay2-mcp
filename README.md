@@ -109,7 +109,7 @@ Two design notes for local models: on multi-part asks, heavy-thinking models can
   }
   ```
   
-  The `env` line just pins the history file to a known folder — see [Reading the journal](docs/journal.md) to relocate or turn it off. Setup details and fixes: [Troubleshooting](docs/troubleshooting.md).
+The `env` line just pins the history file to a known folder — see [Reading the journal](docs/journal.md) to relocate or turn it off. Setup details and fixes: [Troubleshooting](docs/troubleshooting.md).
 
 **Check the MCP:**
 

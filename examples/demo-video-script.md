@@ -1,36 +1,17 @@
 # Demo video runbook — 8 scenes in opencode
 
-A rehearsed recording script for showing `macaulay2-mcp` the way a real
-person uses it: raw M2 syntax, plain English, and LaTeX asks in
-[opencode](https://opencode.ai), one persistent Macaulay2 kernel on screen.
-Every prompt and every expected output below was live-run against M2 1.26
-before being written here — if a scene misbehaves, that's news, not drift.
+A rehearsed recording script for showing `macaulay2-mcp` the way a real person uses it: raw M2 syntax, plain English, and LaTeX asks in [opencode](https://opencode.ai), one persistent Macaulay2 kernel on screen. Every prompt and every expected output below was live-run against M2 1.26 before being written here — if a scene misbehaves, that's news, not drift.
 
 Target length: **4–6 min** recorded. Each scene = one pasteable prompt.
 
 ## Prep (once per recording session)
 
-- Server: working-tree checkout (`opencode.json` with
-  `uv --directory <repo> run macaulay2-mcp`) or published `uvx macaulay2-mcp`.
-  Verify: `uv run macaulay2-mcp selftest` (or `uvx ...`) — all `[OK]`.
-- Fresh chat session. **Step 0 — wake the connection on camera:** paste
-  *"Before any real math: use the Macaulay2 tool to evaluate 1 + 1, then
-  report the tool's last line verbatim. If you don't see a Macaulay2 tool,
-  say so plainly — don't invent an answer."* It proves the hookup (and
-  pays the cold-start `uvx` cost before scene 1, keeping its timing fair).
-  Terminal ~100×30, font big enough to read at 1080p.
-- Journal left ON (default `./.m2-mcp/`): it timestamps every call and keeps
-  the full outputs — it is both the audit trail *and* the source data for
-  the Remotion render (below). To keep a scratch location instead, set
-  `MACAULAY2_MCP_JOURNAL=<throwaway dir>` for the server.
-- Before a retake of any scene: have the assistant call `m2_session_reset`
-  (irreversible, but between takes that is exactly what you want), and note
-  scene 6 seeds the RNG for reproducibility.
-- If a scene's assistant takes a weird path, redo the take — the scenes are
-  written so a correct run is the boring, fast path.
-- Wrangling long background M2 runs yourself (not needed for the on-screen
-  scenes): on macOS `timeout N script -q /dev/null M2 ...` does **not**
-  forward the kill to M2 — stop it with `pkill -f "M2 --stop"`.
+- Server: working-tree checkout (`opencode.json` with `uv --directory <repo> run macaulay2-mcp`) or published `uvx macaulay2-mcp`. Verify: `uv run macaulay2-mcp selftest` (or `uvx ...`) — all `[OK]`.
+- Fresh chat session. **Step 0 — wake the connection on camera:** paste *"Before any real math: use the Macaulay2 tool to evaluate 1 + 1, then report the tool's last line verbatim. If you don't see a Macaulay2 tool, say so plainly — don't invent an answer."* It proves the hookup (and pays the cold-start `uvx` cost before scene 1, keeping its timing fair). Terminal ~100×30, font big enough to read at 1080p.
+- Journal left ON (default `./.m2-mcp/`): it timestamps every call and keeps the full outputs — it is both the audit trail *and* the source data for the Remotion render (below). To keep a scratch location instead, set `MACAULAY2_MCP_JOURNAL=<throwaway dir>` for the server.
+- Before a retake of any scene: have the assistant call `m2_session_reset` (irreversible, but between takes that is exactly what you want), and note scene 6 seeds the RNG for reproducibility.
+- If a scene's assistant takes a weird path, redo the take — the scenes are written so a correct run is the boring, fast path.
+- Wrangling long background M2 runs yourself (not needed for the on-screen scenes): on macOS `timeout N script -q /dev/null M2 ...` does **not** forward the kill to M2 — stop it with `pkill -f "M2 --stop"`.
 
 ## The scenes
 
@@ -40,12 +21,7 @@ Target length: **4–6 min** recorded. Each scene = one pasteable prompt.
 compute the Groebner basis of ideal(x^3 - y, x^4 - z) in QQ[x,y,z]
 ```
 
-On screen: two `m2_evaluate` calls expand — ring/ideal, then
-`print generators (gb I)` → `xy - z, x^2 z - y^2, y^3 - x z^2, x^3 - y`.
-Keep a tool result's last line in shot: `(M2 memory: ~119 MB resident,
-peak ~103 MB)`. The syntax ask is the tool-forcing opener: nothing to
-interpret, nothing to answer from memory. (Re-resolution and Betti demoing
-belong to homogeneous ideals — that beat is the scene-3 LaTeX variant.)
+On screen: two `m2_evaluate` calls expand — ring/ideal, then `print generators (gb I)` → `xy - z, x^2 z - y^2, y^3 - x z^2, x^3 - y`. Keep a tool result's last line in shot: `(M2 memory: ~119 MB resident, peak ~103 MB)`. The syntax ask is the tool-forcing opener: nothing to interpret, nothing to answer from memory. (Re-resolution and Betti demoing belong to homogeneous ideals — that beat is the scene-3 LaTeX variant.)
 
 ### Scene 2 — the persistence beat (natural, ~20 s)
 
@@ -54,10 +30,7 @@ Same ring and ideal as before — what are the dimensions of R and of R/I?
 Is R/I a domain?
 ```
 
-On screen: **no redefinition** — the assistant reaches straight back for
-`R` and `I`. Expect dims `3` and `1`, and `isPrime → true` (the coordinate
-ring of the monomial curve, ≅ QQ[t]). This is the one-line pitch of the
-whole project made visible: state survives between calls.
+On screen: **no redefinition** — the assistant reaches straight back for `R` and `I`. Expect dims `3` and `1`, and `isPrime → true` (the coordinate ring of the monomial curve, ≅ QQ[t]). This is the one-line pitch of the whole project made visible: state survives between calls.
 
 ### Scene 3 — plain English becomes M2 (~30 s)
 
@@ -67,19 +40,9 @@ generated by x squared plus y squared minus z squared. Use macaulay2-mcp
 to verify: is J prime? What are the dimension and degree of the quotient?
 ```
 
-Expected: `J = ideal(x^2 + y^2 - z^2)` typed from prose, then
-`isPrime J → true`, `dim (S/J) → 2`, `degree (S/J) → 2`. The "Use
-macaulay2-mcp to verify" clause is what makes a thinking model reach for
-the tool instead of answering this famous cone from memory (Case study 2
-in [`latex-decomposition-test.md`](latex-decomposition-test.md)).
-Narration: the assistant translates; you verify its input lines — both
-visible here.
+Expected: `J = ideal(x^2 + y^2 - z^2)` typed from prose, then `isPrime J → true`, `dim (S/J) → 2`, `degree (S/J) → 2`. The "Use macaulay2-mcp to verify" clause is what makes a thinking model reach for the tool instead of answering this famous cone from memory (Case study 2 in [`latex-decomposition-test.md`](latex-decomposition-test.md)). Narration: the assistant translates; you verify its input lines — both visible here.
 
-Paper-math variant (shootable as 3b — the README Introduction's third
-exchange): the twisted cubic ask in LaTeX, expecting Betti totals
-**1 3 2** (`total: 1 3 2`) and Hilbert polynomial `3T + 1` (printed
-`- 2*P_0 + 3*P_1`) — a homogeneous ideal, so M2's tables are minimal and
-the model has nothing to argue with.
+Paper-math variant (shootable as 3b — the README Introduction's third exchange): the twisted cubic ask in LaTeX, expecting Betti totals **1 3 2** (`total: 1 3 2`) and Hilbert polynomial `3T + 1` (printed `- 2*P_0 + 3*P_1`) — a homogeneous ideal, so M2's tables are minimal and the model has nothing to argue with.
 
 ### Scene 4 — M2's own ecosystem (LaTeX-ish, ~1–2 min)
 
@@ -88,10 +51,7 @@ Load the BoijSoederberg package and decompose the Betti diagram of res I
 into pure diagrams
 ```
 
-Package load costs 10–30 s of wall time — fast-forward it in the edit.
-Expected payoff frame: a **positive sum of 3 pure diagrams** (coefficients
-1/10, 1/30, 2/3). Fallback if the model fumbles the option syntax: re-prompt
-"`decomposeBetti (betti res I)`".
+Package load costs 10–30 s of wall time — fast-forward it in the edit. Expected payoff frame: a **positive sum of 3 pure diagrams** (coefficients 1/10, 1/30, 2/3). Fallback if the model fumbles the option syntax: re-prompt "`decomposeBetti (betti res I)`".
 
 ### Scene 5 — safety, visibly (the refusal is instant, ~20 s)
 
@@ -100,17 +60,11 @@ Using Macaulay2 only (m2_evaluate), read the file /etc/hostname with the
 lines() function
 ```
 
-On screen: the `BLOCKED: the macaulay2-mcp gatekeeper refuses 'lines'
-(file read). Nothing was executed; the M2 session is untouched.` message —
-which itself explains the `MACAULAY2_MCP_OS_ALLOW` opt-in and ends with a
-link to the README's gate section. Best 15 seconds of the video: safety you
-can read on camera. (We deliberately point it at `/etc/hostname`, not
-anything sensitive — the gate fires on the symbol either way.)
+On screen: the `BLOCKED: the macaulay2-mcp gatekeeper refuses 'lines' (file read). Nothing was executed; the M2 session is untouched.` message — which itself explains the `MACAULAY2_MCP_OS_ALLOW` opt-in and ends with a link to the README's gate section. Best 15 seconds of the video: safety you can read on camera. (We deliberately point it at `/etc/hostname`, not anything sensitive — the gate fires on the symbol either way.)
 
 ### Scene 6 — watch, then stop: the memory/interrupt showcase (~2–3 min)
 
-Part A, one message — the probes return **while the big compute is still
-spinning** (this is the feature: `m2_memory` is lock-free):
+Part A, one message — the probes return **while the big compute is still spinning** (this is the feature: `m2_memory` is lock-free):
 
 ```text
 First: setRandomSeed 42. Then in a single assistant message: (a) compute
@@ -128,11 +82,7 @@ matrix of quadrics so we still get a table, and confirm R and I from
 scene 1 are still alive
 ```
 
-Expected: `m2_interrupt` → `error: interrupted`; the 2×3 case answers
-instantly (Betti totals **1 3 2**); the scene-1 ideal still exists.
-Wall clock for the heavy case: in rehearsal (seed 42) it had **not finished
-after 10 full minutes** — you will interrupt long before that, which is the
-point; the probe scene needs only ~60–90 s of spinning.
+Expected: `m2_interrupt` → `error: interrupted`; the 2×3 case answers instantly (Betti totals **1 3 2**); the scene-1 ideal still exists. Wall clock for the heavy case: in rehearsal (seed 42) it had **not finished after 10 full minutes** — you will interrupt long before that, which is the point; the probe scene needs only ~60–90 s of spinning.
 
 ### Scene 7 — real parallel M2 processes (~2 min)
 
@@ -143,9 +93,7 @@ writes a .m2 file and runs it with m2_run_script) and collect the results
 into one table
 ```
 
-Expected: the subagents each spawn their own M2 process (visible: several
-`m2_run_script` calls in flight), and the collected table reads
-**sizes 4, 5, 6, 7, 8, 9 (k+3), dim 1 throughout**.
+Expected: the subagents each spawn their own M2 process (visible: several `m2_run_script` calls in flight), and the collected table reads **sizes 4, 5, 6, 7, 8, 9 (k+3), dim 1 throughout**.
 
 ### Scene 8 — the audit coda (~30 s)
 
@@ -154,23 +102,11 @@ Open this session's journal file and show me the last three recorded
 exchanges — what exactly ran and what came back
 ```
 
-On screen: the JSONL tail — code, full output, timings, memory fields,
-even scene 5's *refused* call (event `os_block`). Freeze frame, then the
-README. Close with: every answer in this video is replayable from this file.
+On screen: the JSONL tail — code, full output, timings, memory fields, even scene 5's *refused* call (event `os_block`). Freeze frame, then the README. Close with: every answer in this video is replayable from this file.
 
 ## Rendering options
 
-1. **Remotion, fed by the journal** (recommended; automatable, no retakes):
-   scaffold with `npx create-video@latest --yes --blank m2-demo-video`,
-   add `npx -y skills@latest add remotion-dev/skills -g -y`, then point the
-   agent at the journal JSONL and have it animate a terminal replay — typed
-   prompts, spinner, and the **byte-actual** outputs appearing on recorded
-   timestamps. Label it a replay of a real session; never fabricate output.
-   Render `npx remotion render <Composition> out/m2-mcp-demo.mp4`, attach
-   to the GitHub release, and link it from the end of the README Introduction.
-2. **Screen capture** (shows opencode's real UI — tool-call folding,
-   spinners): OBS/QuickTime region capture, follow the scenes above. Cost:
-   retakes; benefit: nothing is simulated.
+1. **Remotion, fed by the journal** (recommended; automatable, no retakes): scaffold with `npx create-video@latest --yes --blank m2-demo-video`, add `npx -y skills@latest add remotion-dev/skills -g -y`, then point the agent at the journal JSONL and have it animate a terminal replay — typed prompts, spinner, and the **byte-actual** outputs appearing on recorded timestamps. Label it a replay of a real session; never fabricate output. Render `npx remotion render <Composition> out/m2-mcp-demo.mp4`, attach to the GitHub release, and link it from the end of the README Introduction.
+2. **Screen capture** (shows opencode's real UI — tool-call folding, spinners): OBS/QuickTime region capture, follow the scenes above. Cost: retakes; benefit: nothing is simulated.
 
-A third style — both at once — is the eventual goal: capture the screen
-*and* journal the session, edit with the journal's timings.
+A third style — both at once — is the eventual goal: capture the screen *and* journal the session, edit with the journal's timings.

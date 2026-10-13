@@ -1,8 +1,6 @@
 # Example: Groebner basis and Betti table
 
-A genuine transcript from the `macaulay2` MCP server (v0.1, M2 1.26.06).
-The "user" here is an LLM calling the tools; what it sees is exactly the
-`m2_evaluate` output below.
+A genuine transcript from the `macaulay2` MCP server (v0.1, M2 1.26.06). The "user" here is an LLM calling the tools; what it sees is exactly the `m2_evaluate` output below.
 
 ## Tool calls
 
@@ -38,8 +36,7 @@ i5 : print generators (gb I)
 | xy-z x2z-y2 y3-xz2 x3-y |
 ```
 
-(The plain-text printer shows `x^3` as a raised `3`; in the matrix above the
-basis is `xy - z, x^2 z - y^2, y^3 - x z^2, x^3 - y`.)
+(The plain-text printer shows `x^3` as a raised `3`; in the matrix above the basis is `xy - z, x^2 z - y^2, y^3 - x z^2, x^3 - y`.)
 
 ### 3. Resolution and Betti table
 
@@ -71,9 +68,4 @@ o8 : BettiTally
 > A graded free resolution has total Betti numbers (1, 4, 4, 1):
 > 1 generator in degree 0, 4 syzygies starting in degrees 1 and 2.
 
-Footnote (2026-10-10): `I = (x^3 - y, x^4 - z)` is not homogeneous, so the
-table above — exactly what M2 printed — is a valid resolution but not a
-certified *minimal graded* one; careful models may (correctly) caveat it.
-The README's Introduction asks for Betti tables only of homogeneous ideals
-for precisely this reason — see Case study 2 in
-[`latex-decomposition-test.md`](latex-decomposition-test.md).
+Footnote (2026-10-10): `I = (x^3 - y, x^4 - z)` is not homogeneous, so the table above — exactly what M2 printed — is a valid resolution but not a certified *minimal graded* one; careful models may (correctly) caveat it. The README's Introduction asks for Betti tables only of homogeneous ideals for precisely this reason — see Case study 2 in [`latex-decomposition-test.md`](latex-decomposition-test.md).
