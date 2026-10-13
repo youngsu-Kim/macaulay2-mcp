@@ -35,6 +35,11 @@ Input
 Compute the Groebner basis of ideal(x^3 - y, x^4 - z) in QQ[x,y,z]
 ```
 
+Or Input
+```text
+First read Macaulay2-skills available at https://github.com/youngsu-Kim/macaulay2-skills. Then compute the Groebner basis of ideal(x^3 - y, x^4 - z) in QQ[x,y,z]
+```
+
 Output Example
 ```text
 Response:   m2_evaluate: R = QQ[x,y,z]; I = ideal(x^3 - y, x^4 - z)
@@ -69,7 +74,7 @@ For the twisted cubic $C \subset \mathbb{P}^3$, whose ideal is $I_C = (xz - y^2,
 Output Example
 ```text
 Response:   m2_evaluate: A = QQ[w,x,y,z]
-                        C = ideal(x*z - y^2, y*w - z^2, x*w - y*z)
+                         C = ideal(x*z - y^2, y*w - z^2, x*w - y*z)
             m2_evaluate: betti res C
             m2_evaluate: hilbertPolynomial (A^1/C)
             Totals (1, 3, 2) — three quadrics, two linear syzygies — and the
