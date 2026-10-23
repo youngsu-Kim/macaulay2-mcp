@@ -255,6 +255,15 @@ Symptoms and fixes: [`docs/troubleshooting.md`](docs/troubleshooting.md).
 
 Please file issues and PRs on [GitHub](https://github.com/youngsu-Kim/macaulay2-mcp). Once the software has stabilized, it is expected to be announced in the [Macaulay2 Zulip](https://macaulay2.zulipchat.com/) first.
 
+## Sources
+
+All material derives from publicly available sources, listed here for auditability:
+
+- **Macaulay2 documentation and the official [Getting Started tutorial](https://macaulay2.com/GettingStarted/)** — the rational-quartic example in the Examples section is worked straight from the tutorial.
+- **Session transcripts** — the genuine outputs in [examples/](examples/) are published in this repo.
+- **Benchmark measurements** — collected with the companion [macaulay2-skills](https://github.com/youngsu-Kim/macaulay2-skills) repo; summaries are public there (FINDINGS.md), raw transcripts pending publication.
+- **PyPI package `macaulay2-mcp`** and the [Binder companion repo](https://github.com/youngsu-Kim/macaulay2-mcp-binder) — both public.
+
 ## License
 
 This program is free software under the [GNU General Public License v3 or later](LICENSE): use it freely, including commercially — but if you distribute it, or a program built on top of it, the same freedoms must travel with your copy.
