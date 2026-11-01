@@ -12,7 +12,9 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 # Pinned: only Macaulay2 1.26.x (latest stable) is supported in v0.1.
 SUPPORTED_M2_VERSIONS: tuple[int, int] = (1, 26)
@@ -22,6 +24,15 @@ SUPPORTED_M2_VERSIONS: tuple[int, int] = (1, 26)
 # errors print inline instead of opening the debugger (--no-debug),
 # prompt-based protocol works over pipes (--no-tty).
 M2_KERNEL_FLAGS: tuple[str, ...] = ("-q", "--no-debug", "--no-tty", "--silent")
+
+# Well-known package-manager install prefixes, checked when M2 is not on
+# PATH (module-level so tests can patch it).
+_WELL_KNOWN_M2_PATHS: tuple[str, ...] = (
+    "/opt/homebrew/opt/macaulay2/bin/M2",
+    "/usr/local/opt/macaulay2/bin/M2",
+    "/opt/homebrew/bin/M2",
+    "/usr/local/bin/M2",
+)
 
 # Author-set safety defaults: guard the shared M2 session against runaway or
 # infinite computations. See the TIMED OUT message in kernel.py.
@@ -40,6 +51,10 @@ _INSTALL_HINT = """Install Macaulay2 (latest stable):
   Ubuntu:  sudo add-apt-repository ppa:macaulay2/macaulay2 && sudo apt install macaulay2
            (adds a PPA maintained by the Macaulay2 developers;
             undo: sudo add-apt-repository --remove ppa:macaulay2/macaulay2)
+  pip:     pip install passagemath-macaulay2
+           (PyPI wheels ship M2 1.26; run the server inside the same Python
+            environment so it is discovered, or set M2_BIN to the bundled
+            binary - site-packages/sage_wheels/bin/M2)
   Other:   https://macaulay2.com/Downloads/
 If M2 is installed in a non-standard location, set the M2_BIN environment
 variable to the full path of the executable."""
@@ -92,16 +107,26 @@ def discover_binary() -> str:
             f"M2_BIN is set to {override!r}, but that file does not exist or is not "
             f"executable. Point it at a Macaulay2 executable, or unset M2_BIN."
         )
+    # passagemath-macaulay2 wheels ship M2 inside the active Python
+    # environment (sage_wheels/bin/M2 under a site-packages directory).
+    # If that copy exists, the user installed it INTO this environment on
+    # purpose, so it wins over ambient PATH/brew/PPA installs - this is
+    # what makes
+    #   uvx --with passagemath-macaulay2 macaulay2-mcp
+    # use the wheel's kernel with no environment variables.
+    # Scan every sys.path entry (not just sysconfig's purelib): uv's
+    # ephemeral overlay environments (--with) keep the payload in cache
+    # layers that purelib does not point at but sys.path does (verified:
+    # _uv_ephemeral_overlay.pth adds the archive layer via site.addsitedir).
+    for entry in sys.path:
+        cand = Path(entry) / "sage_wheels" / "bin" / "M2"
+        if cand.is_file() and os.access(cand, os.X_OK):
+            return str(cand)
     for name in ("M2", "Macaulay2"):
         found = shutil.which(name)
         if found:
             return found
-    for path in (
-        "/opt/homebrew/opt/macaulay2/bin/M2",
-        "/usr/local/opt/macaulay2/bin/M2",
-        "/opt/homebrew/bin/M2",
-        "/usr/local/bin/M2",
-    ):
+    for path in _WELL_KNOWN_M2_PATHS:
         if os.path.isfile(path) and os.access(path, os.X_OK):
             return path
     raise M2NotFoundError(
