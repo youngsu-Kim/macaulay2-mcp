@@ -258,3 +258,18 @@ def test_provenance_label():
     wheel_label = config.provenance_label("/venv/lib/site-packages/sage_wheels/bin/M2")
     assert wheel_label.startswith("passagemath wheel")
     assert "FALLBACK" in wheel_label
+
+
+def test_wheel_libs_env(tmp_path):
+    """Wheel-sourced binaries get the real libs dir on LD_LIBRARY_PATH."""
+    (tmp_path / "sage_wheels" / "bin").mkdir(parents=True)
+    (tmp_path / "passagemath_macaulay2.libs").mkdir()
+    env = config._wheel_libs_env(str(tmp_path / "sage_wheels" / "bin" / "M2"))
+    assert env is not None
+    assert str(tmp_path / "passagemath_macaulay2.libs") in env["LD_LIBRARY_PATH"]
+    # official install: no environment is touched
+    assert config._wheel_libs_env("/opt/homebrew/bin/M2") is None
+    # wheel-style path but no libs dir next to it: no env either
+    isolated = tmp_path / "isolated"
+    (isolated / "sage_wheels" / "bin").mkdir(parents=True)
+    assert config._wheel_libs_env(str(isolated / "sage_wheels" / "bin" / "M2")) is None

@@ -499,6 +499,7 @@ class M2Session:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            env=config.kernel_env,
         )
         self._linebuf.clear()
         self._pending_marker = None
@@ -960,6 +961,7 @@ class M2ScriptRunner:
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,  # merged: errors keep stream order
+            env=config.kernel_env,
         )
         try:
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)

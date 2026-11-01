@@ -79,6 +79,9 @@ class M2Config:
     binary: str
     version: tuple[int, int, int]
     version_raw: str
+    # Extra environment for kernel launches; set only for the passagemath
+    # wheel (see _wheel_libs_env) - None means inherit the parent environment.
+    kernel_env: dict[str, str] | None = None
 
     @property
     def version_str(self) -> str:
@@ -148,6 +151,31 @@ def provenance_label(binary: str) -> str:
     return "official installation"
 
 
+def _wheel_libs_env(binary: str) -> dict[str, str] | None:
+    """Workaround for the passagemath-macaulay2 Linux wheels (reported upstream).
+
+    The wheels bundle M2's shared libraries in ``passagemath_macaulay2.libs``
+    next to ``sage_wheels`` (auditwheel layout), but the ``sage_wheels/bin/M2``
+    wrapper script exports ``LD_LIBRARY_PATH`` pointing at ``../lib/Macaulay2/lib``
+    — a directory that does not exist in the wheel. macOS does not notice
+    (dylibs are found via embedded ``@loader_path``), and ``sage -sh`` papers
+    over it; a DIRECT kernel launch, which is what this server does, fails to
+    load ``M2-binary``. Fix on our side: prepend the real libs directory to
+    ``LD_LIBRARY_PATH`` for wheel-sourced binaries. Returns None for official
+    installs (no environment is touched).
+    """
+    p = Path(binary)
+    # binary = <site-packages>/sage_wheels/bin/M2; the auditwheel libs live in
+    # <site-packages>/passagemath_macaulay2.libs - a SIBLING of sage_wheels.
+    libs = p.parents[2] / "passagemath_macaulay2.libs"
+    if "sage_wheels" in str(p) and libs.is_dir():
+        env = dict(os.environ)
+        existing = env.get("LD_LIBRARY_PATH", "")
+        env["LD_LIBRARY_PATH"] = f"{libs}:{existing}" if existing else str(libs)
+        return env
+    return None
+
+
 def query_version(binary: str) -> tuple[tuple[int, int, int], str]:
     try:
         proc = subprocess.run(
@@ -156,6 +184,7 @@ def query_version(binary: str) -> tuple[tuple[int, int, int], str]:
             text=True,
             timeout=30,
             check=False,
+            env=_wheel_libs_env(binary),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise M2StartupError(f"Could not run {binary!r} --version: {exc}") from exc
@@ -183,7 +212,12 @@ def load_config() -> M2Config:
             f"           (requires the Macaulay2 PPA added above)\n"
             f"Support for other versions may arrive in a future release."
         )
-    return M2Config(binary=binary, version=version, version_raw=version_raw)
+    return M2Config(
+        binary=binary,
+        version=version,
+        version_raw=version_raw,
+        kernel_env=_wheel_libs_env(binary),
+    )
 
 
 def clamp_timeout(timeout_s: float) -> int:
