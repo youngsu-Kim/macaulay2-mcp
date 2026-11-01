@@ -161,3 +161,7 @@ Every commit message ends with: `Assisted-by: <MODEL> hosted at the National Res
 ## Sources policy (adopted 2026-10-22)
 
 Only publicly available material is incorporated into this repo. Any new source must be added to README's `## Sources` section; unpublished material (raw transcripts, private notes) may be summarized but must be labeled as pending publication.
+
+## External communication (adopted 2026-11-01)
+
+Replies to GitHub issues or discussions opened by someone else, and any other public message sent on the project's behalf, require the author's explicit go-ahead first: draft it, show it, wait for approval. Sending is never implied by drafting.
