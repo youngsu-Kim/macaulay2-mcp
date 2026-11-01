@@ -234,3 +234,27 @@ def test_discover_binary_without_wheel_mentions_passagemath(monkeypatch, tmp_pat
         config.discover_binary()
     assert "passagemath-macaulay2" in str(excinfo.value)
     assert "sage_wheels" in str(excinfo.value)
+
+
+def test_discovery_prefers_official_over_wheel(monkeypatch, tmp_path):
+    """Author's design decision: PATH/brew/PPA installs outrank the wheel."""
+    monkeypatch.delenv("M2_BIN", raising=False)
+    official = tmp_path / "official" / "M2"
+    official.parent.mkdir()
+    official.write_text("#!/bin/sh\n")
+    official.chmod(0o755)
+    monkeypatch.setattr(config.shutil, "which", lambda name: str(official))
+    wheel = tmp_path / "sage_wheels" / "bin" / "M2"
+    wheel.parent.mkdir(parents=True)
+    wheel.write_text("#!/bin/sh\n")
+    wheel.chmod(0o755)
+    monkeypatch.setattr(config, "_WELL_KNOWN_M2_PATHS", ())
+    monkeypatch.setattr(config.sys, "path", [str(tmp_path)])
+    assert config.discover_binary() == str(official)
+
+
+def test_provenance_label():
+    assert config.provenance_label("/opt/homebrew/bin/M2") == "official installation"
+    wheel_label = config.provenance_label("/venv/lib/site-packages/sage_wheels/bin/M2")
+    assert wheel_label.startswith("passagemath wheel")
+    assert "FALLBACK" in wheel_label

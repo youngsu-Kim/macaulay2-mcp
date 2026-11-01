@@ -51,13 +51,15 @@ _INSTALL_HINT = """Install Macaulay2 (latest stable):
   Ubuntu:  sudo add-apt-repository ppa:macaulay2/macaulay2 && sudo apt install macaulay2
            (adds a PPA maintained by the Macaulay2 developers;
             undo: sudo add-apt-repository --remove ppa:macaulay2/macaulay2)
-  pip:     pip install passagemath-macaulay2
-           (PyPI wheels ship M2 1.26; run the server inside the same Python
-            environment so it is discovered, or set M2_BIN to the bundled
+  uv:      uvx --with passagemath-macaulay2 macaulay2-mcp
+           (one command: server + kernel, no system install needed; PyPI
+            wheels ship M2 1.26 - https://pypi.org/project/passagemath-macaulay2/;
+            alternatively uv pip install passagemath-macaulay2 into the same
+            Python environment as the server, or set M2_BIN to the bundled
             binary - site-packages/sage_wheels/bin/M2)
   Other:   https://macaulay2.com/Downloads/
-If M2 is installed in a non-standard location, set the M2_BIN environment
-variable to the full path of the executable."""
+If M2 is installed in a non-standard location (or built from source), set the
+M2_BIN environment variable to the full path of the executable."""
 
 
 class M2NotFoundError(Exception):
@@ -107,21 +109,6 @@ def discover_binary() -> str:
             f"M2_BIN is set to {override!r}, but that file does not exist or is not "
             f"executable. Point it at a Macaulay2 executable, or unset M2_BIN."
         )
-    # passagemath-macaulay2 wheels ship M2 inside the active Python
-    # environment (sage_wheels/bin/M2 under a site-packages directory).
-    # If that copy exists, the user installed it INTO this environment on
-    # purpose, so it wins over ambient PATH/brew/PPA installs - this is
-    # what makes
-    #   uvx --with passagemath-macaulay2 macaulay2-mcp
-    # use the wheel's kernel with no environment variables.
-    # Scan every sys.path entry (not just sysconfig's purelib): uv's
-    # ephemeral overlay environments (--with) keep the payload in cache
-    # layers that purelib does not point at but sys.path does (verified:
-    # _uv_ephemeral_overlay.pth adds the archive layer via site.addsitedir).
-    for entry in sys.path:
-        cand = Path(entry) / "sage_wheels" / "bin" / "M2"
-        if cand.is_file() and os.access(cand, os.X_OK):
-            return str(cand)
     for name in ("M2", "Macaulay2"):
         found = shutil.which(name)
         if found:
@@ -129,9 +116,36 @@ def discover_binary() -> str:
     for path in _WELL_KNOWN_M2_PATHS:
         if os.path.isfile(path) and os.access(path, os.X_OK):
             return path
+    # Fallback (author's decision): the passagemath-macaulay2 PyPI wheels
+    # ship a prebuilt M2 kernel at sage_wheels/bin/M2 under a site-packages
+    # directory. The OFFICIAL installation (PATH / brew tap / Ubuntu PPA)
+    # always wins when present; the wheel copy is used only when no official
+    # M2 exists - which is what enables a fully pip-sourced stack
+    #   uvx --with passagemath-macaulay2 macaulay2-mcp
+    # on machines without brew/PPA (students, shared clusters, no admin
+    # rights). To force the wheel on a dual-install machine, set M2_BIN.
+    # The scan covers every sys.path entry, not just sysconfig's purelib:
+    # uv's ephemeral overlay environments (--with) keep the payload in
+    # cache layers that purelib does not point at but sys.path does
+    # (verified: _uv_ephemeral_overlay.pth adds the archive layer via
+    # site.addsitedir).
+    for entry in sys.path:
+        cand = Path(entry) / "sage_wheels" / "bin" / "M2"
+        if cand.is_file() and os.access(cand, os.X_OK):
+            return str(cand)
     raise M2NotFoundError(
         "Macaulay2 (the 'M2' executable) was not found on this machine.\n\n" + _INSTALL_HINT
     )
+
+
+def provenance_label(binary: str) -> str:
+    """Human-readable source of an M2 binary (for transparency notes)."""
+    if "sage_wheels" in binary:
+        return (
+            "passagemath wheel (FALLBACK - no official Macaulay2 installation "
+            "was found; set M2_BIN to override)"
+        )
+    return "official installation"
 
 
 def query_version(binary: str) -> tuple[tuple[int, int, int], str]:
