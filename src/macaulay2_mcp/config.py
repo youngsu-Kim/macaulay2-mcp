@@ -12,7 +12,9 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 # Pinned: only Macaulay2 1.26.x (latest stable) is supported in v0.1.
 SUPPORTED_M2_VERSIONS: tuple[int, int] = (1, 26)
@@ -22,6 +24,15 @@ SUPPORTED_M2_VERSIONS: tuple[int, int] = (1, 26)
 # errors print inline instead of opening the debugger (--no-debug),
 # prompt-based protocol works over pipes (--no-tty).
 M2_KERNEL_FLAGS: tuple[str, ...] = ("-q", "--no-debug", "--no-tty", "--silent")
+
+# Well-known package-manager install prefixes, checked when M2 is not on
+# PATH (module-level so tests can patch it).
+_WELL_KNOWN_M2_PATHS: tuple[str, ...] = (
+    "/opt/homebrew/opt/macaulay2/bin/M2",
+    "/usr/local/opt/macaulay2/bin/M2",
+    "/opt/homebrew/bin/M2",
+    "/usr/local/bin/M2",
+)
 
 # Author-set safety defaults: guard the shared M2 session against runaway or
 # infinite computations. See the TIMED OUT message in kernel.py.
@@ -40,9 +51,15 @@ _INSTALL_HINT = """Install Macaulay2 (latest stable):
   Ubuntu:  sudo add-apt-repository ppa:macaulay2/macaulay2 && sudo apt install macaulay2
            (adds a PPA maintained by the Macaulay2 developers;
             undo: sudo add-apt-repository --remove ppa:macaulay2/macaulay2)
+  uv:      uvx --with passagemath-macaulay2 macaulay2-mcp
+           (one command: server + kernel, no system install needed; PyPI
+            wheels ship M2 1.26 - https://pypi.org/project/passagemath-macaulay2/;
+            alternatively uv pip install passagemath-macaulay2 into the same
+            Python environment as the server, or set M2_BIN to the bundled
+            binary - site-packages/sage_wheels/bin/M2)
   Other:   https://macaulay2.com/Downloads/
-If M2 is installed in a non-standard location, set the M2_BIN environment
-variable to the full path of the executable."""
+If M2 is installed in a non-standard location (or built from source), set the
+M2_BIN environment variable to the full path of the executable."""
 
 
 class M2NotFoundError(Exception):
@@ -62,6 +79,9 @@ class M2Config:
     binary: str
     version: tuple[int, int, int]
     version_raw: str
+    # Extra environment for kernel launches; set only for the passagemath
+    # wheel (see _wheel_libs_env) - None means inherit the parent environment.
+    kernel_env: dict[str, str] | None = None
 
     @property
     def version_str(self) -> str:
@@ -96,17 +116,64 @@ def discover_binary() -> str:
         found = shutil.which(name)
         if found:
             return found
-    for path in (
-        "/opt/homebrew/opt/macaulay2/bin/M2",
-        "/usr/local/opt/macaulay2/bin/M2",
-        "/opt/homebrew/bin/M2",
-        "/usr/local/bin/M2",
-    ):
+    for path in _WELL_KNOWN_M2_PATHS:
         if os.path.isfile(path) and os.access(path, os.X_OK):
             return path
+    # Fallback (author's decision): the passagemath-macaulay2 PyPI wheels
+    # ship a prebuilt M2 kernel at sage_wheels/bin/M2 under a site-packages
+    # directory. The OFFICIAL installation (PATH / brew tap / Ubuntu PPA)
+    # always wins when present; the wheel copy is used only when no official
+    # M2 exists - which is what enables a fully pip-sourced stack
+    #   uvx --with passagemath-macaulay2 macaulay2-mcp
+    # on machines without brew/PPA (students, shared clusters, no admin
+    # rights). To force the wheel on a dual-install machine, set M2_BIN.
+    # The scan covers every sys.path entry, not just sysconfig's purelib:
+    # uv's ephemeral overlay environments (--with) keep the payload in
+    # cache layers that purelib does not point at but sys.path does
+    # (verified: _uv_ephemeral_overlay.pth adds the archive layer via
+    # site.addsitedir).
+    for entry in sys.path:
+        cand = Path(entry) / "sage_wheels" / "bin" / "M2"
+        if cand.is_file() and os.access(cand, os.X_OK):
+            return str(cand)
     raise M2NotFoundError(
         "Macaulay2 (the 'M2' executable) was not found on this machine.\n\n" + _INSTALL_HINT
     )
+
+
+def provenance_label(binary: str) -> str:
+    """Human-readable source of an M2 binary (for transparency notes)."""
+    if "sage_wheels" in binary:
+        return (
+            "passagemath wheel (FALLBACK - no official Macaulay2 installation "
+            "was found; set M2_BIN to override)"
+        )
+    return "official installation"
+
+
+def _wheel_libs_env(binary: str) -> dict[str, str] | None:
+    """Workaround for the passagemath-macaulay2 Linux wheels (reported upstream).
+
+    The wheels bundle M2's shared libraries in ``passagemath_macaulay2.libs``
+    next to ``sage_wheels`` (auditwheel layout), but the ``sage_wheels/bin/M2``
+    wrapper script exports ``LD_LIBRARY_PATH`` pointing at ``../lib/Macaulay2/lib``
+    — a directory that does not exist in the wheel. macOS does not notice
+    (dylibs are found via embedded ``@loader_path``), and ``sage -sh`` papers
+    over it; a DIRECT kernel launch, which is what this server does, fails to
+    load ``M2-binary``. Fix on our side: prepend the real libs directory to
+    ``LD_LIBRARY_PATH`` for wheel-sourced binaries. Returns None for official
+    installs (no environment is touched).
+    """
+    p = Path(binary)
+    # binary = <site-packages>/sage_wheels/bin/M2; the auditwheel libs live in
+    # <site-packages>/passagemath_macaulay2.libs - a SIBLING of sage_wheels.
+    libs = p.parents[2] / "passagemath_macaulay2.libs"
+    if "sage_wheels" in str(p) and libs.is_dir():
+        env = dict(os.environ)
+        existing = env.get("LD_LIBRARY_PATH", "")
+        env["LD_LIBRARY_PATH"] = f"{libs}:{existing}" if existing else str(libs)
+        return env
+    return None
 
 
 def query_version(binary: str) -> tuple[tuple[int, int, int], str]:
@@ -117,6 +184,7 @@ def query_version(binary: str) -> tuple[tuple[int, int, int], str]:
             text=True,
             timeout=30,
             check=False,
+            env=_wheel_libs_env(binary),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise M2StartupError(f"Could not run {binary!r} --version: {exc}") from exc
@@ -144,7 +212,12 @@ def load_config() -> M2Config:
             f"           (requires the Macaulay2 PPA added above)\n"
             f"Support for other versions may arrive in a future release."
         )
-    return M2Config(binary=binary, version=version, version_raw=version_raw)
+    return M2Config(
+        binary=binary,
+        version=version,
+        version_raw=version_raw,
+        kernel_env=_wheel_libs_env(binary),
+    )
 
 
 def clamp_timeout(timeout_s: float) -> int:

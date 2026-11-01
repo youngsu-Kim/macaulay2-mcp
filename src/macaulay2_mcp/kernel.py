@@ -499,6 +499,7 @@ class M2Session:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            env=config.kernel_env,
         )
         self._linebuf.clear()
         self._pending_marker = None
@@ -554,6 +555,11 @@ class M2Session:
     @property
     def config_error(self) -> str | None:
         return self._config_error
+
+    @property
+    def config(self) -> M2Config | None:
+        """The kernel's configuration once discovered (None before start)."""
+        return self._config
 
     def _new_marker(self) -> str:
         # A valid M2 variable name (letters/digits), unique per call.
@@ -955,6 +961,7 @@ class M2ScriptRunner:
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,  # merged: errors keep stream order
+            env=config.kernel_env,
         )
         try:
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)

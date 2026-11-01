@@ -1,6 +1,10 @@
 """Pure unit tests for small helpers: these must run on ANY machine
 (no Macaulay2, no subprocesses) so refactors stay cheap (U-c)."""
 
+
+import pytest
+
+from macaulay2_mcp import config
 from macaulay2_mcp.config import DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S, _parse_version, clamp_timeout
 from macaulay2_mcp.gatekeep import rejection_message
 from macaulay2_mcp.journal import Journal
@@ -198,3 +202,74 @@ def test_rejection_message_ambiguous_word_gets_rename_hint():
     assert "ordinary word" in msg
     assert "rename" in msg
     assert "file-reading function" in msg
+
+
+# ------------------------------------------- binary discovery (passagemath)
+
+
+def _isolate_discovery(monkeypatch, tmp_path):
+    """Disable M2_BIN, PATH lookup, well-known prefixes and sys.path extras."""
+    monkeypatch.delenv("M2_BIN", raising=False)
+    monkeypatch.setattr(config.shutil, "which", lambda name: None)
+    monkeypatch.setattr(config, "_WELL_KNOWN_M2_PATHS", (str(tmp_path / "nowhere" / "M2"),))
+    # sys.path scan is what finds the wheel: point it ONLY at tmp_path so
+    # no real environment (brew, a venv, uv overlay layers) can interfere.
+    monkeypatch.setattr(config.sys, "path", [str(tmp_path)])
+
+
+def test_discover_binary_finds_passagemath_wheel(monkeypatch, tmp_path):
+    """The sage_wheels copy inside the active environment is discovered."""
+    _isolate_discovery(monkeypatch, tmp_path)
+    wheel = tmp_path / "sage_wheels" / "bin" / "M2"
+    wheel.parent.mkdir(parents=True)
+    wheel.write_text("#!/bin/sh\n")  # is_file + X_OK are enough for discovery
+    wheel.chmod(0o755)
+    assert config.discover_binary() == str(wheel)
+
+
+def test_discover_binary_without_wheel_mentions_passagemath(monkeypatch, tmp_path):
+    """No M2 anywhere: the error hint lists the pip route."""
+    _isolate_discovery(monkeypatch, tmp_path)
+    with pytest.raises(config.M2NotFoundError) as excinfo:
+        config.discover_binary()
+    assert "passagemath-macaulay2" in str(excinfo.value)
+    assert "sage_wheels" in str(excinfo.value)
+
+
+def test_discovery_prefers_official_over_wheel(monkeypatch, tmp_path):
+    """Author's design decision: PATH/brew/PPA installs outrank the wheel."""
+    monkeypatch.delenv("M2_BIN", raising=False)
+    official = tmp_path / "official" / "M2"
+    official.parent.mkdir()
+    official.write_text("#!/bin/sh\n")
+    official.chmod(0o755)
+    monkeypatch.setattr(config.shutil, "which", lambda name: str(official))
+    wheel = tmp_path / "sage_wheels" / "bin" / "M2"
+    wheel.parent.mkdir(parents=True)
+    wheel.write_text("#!/bin/sh\n")
+    wheel.chmod(0o755)
+    monkeypatch.setattr(config, "_WELL_KNOWN_M2_PATHS", ())
+    monkeypatch.setattr(config.sys, "path", [str(tmp_path)])
+    assert config.discover_binary() == str(official)
+
+
+def test_provenance_label():
+    assert config.provenance_label("/opt/homebrew/bin/M2") == "official installation"
+    wheel_label = config.provenance_label("/venv/lib/site-packages/sage_wheels/bin/M2")
+    assert wheel_label.startswith("passagemath wheel")
+    assert "FALLBACK" in wheel_label
+
+
+def test_wheel_libs_env(tmp_path):
+    """Wheel-sourced binaries get the real libs dir on LD_LIBRARY_PATH."""
+    (tmp_path / "sage_wheels" / "bin").mkdir(parents=True)
+    (tmp_path / "passagemath_macaulay2.libs").mkdir()
+    env = config._wheel_libs_env(str(tmp_path / "sage_wheels" / "bin" / "M2"))
+    assert env is not None
+    assert str(tmp_path / "passagemath_macaulay2.libs") in env["LD_LIBRARY_PATH"]
+    # official install: no environment is touched
+    assert config._wheel_libs_env("/opt/homebrew/bin/M2") is None
+    # wheel-style path but no libs dir next to it: no env either
+    isolated = tmp_path / "isolated"
+    (isolated / "sage_wheels" / "bin").mkdir(parents=True)
+    assert config._wheel_libs_env(str(isolated / "sage_wheels" / "bin" / "M2")) is None
