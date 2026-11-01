@@ -11,7 +11,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver.context import Context
 
 from . import __version__
-from .config import DEFAULT_TIMEOUT_S
+from .config import DEFAULT_TIMEOUT_S, provenance_label
 from .gatekeep import check_package_name, find_blocked_calls, rejection_message
 from .journal import Journal
 from .kernel import M2ScriptRunner, M2Session, MemoryInfo
@@ -122,6 +122,11 @@ computing invariants for a whole family I_k — prefer self-contained
 m2_run_script jobs: each runs in its own M2 process and several run truly
 in parallel (issue them as parallel tool calls, or fan out across host
 subagents, each handling a slice of the family).
+
+Upstream resources: Macaulay2 — https://macaulay2.com (documentation:
+https://macaulay2.com/doc/Macaulay2/share/doc/Macaulay2/Macaulay2Doc/html/);
+passagemath-macaulay2, the PyPI wheels shipping the M2 kernel —
+https://pypi.org/project/passagemath-macaulay2/
 """
 
 
@@ -330,6 +335,11 @@ def build_server() -> MCPServer:
     session = M2Session()
     runner = M2ScriptRunner()
     journal = Journal.from_env(__version__)
+    # Kernel provenance is announced once, on the first successful evaluate,
+    # so every LLM session knows which installation it is talking to
+    # (official vs passagemath-wheel fallback) without stderr (invisible in
+    # LLM harnesses - the NOTE reaches the model through the tool result).
+    provenance_reported = False
     if journal.enabled and journal.path is not None:
         logger.info("journal: %s", journal.path)
         # NOTE: no record() here — the header line is written lazily on the
@@ -380,6 +390,19 @@ def build_server() -> MCPServer:
         t0 = time.perf_counter()
         result = await session.evaluate(code, timeout_s, stop_on_error=stop_on_error)
         text = result.output
+        nonlocal provenance_reported
+        if (
+            not provenance_reported
+            and session.config is not None
+            and not result.crashed
+            and not result.timed_out
+        ):
+            provenance_reported = True
+            cfg = session.config
+            text = (
+                f"NOTE(kernel): this session runs Macaulay2 {cfg.version_str} "
+                f"from the {provenance_label(cfg.binary)} at {cfg.binary}.\n\n{text}"
+            )
         if result.errored and not result.interrupted and not result.crashed:
             text += "\n\n" + (
                 _STOPPED_ADDENDUM.format(not_sent=result.not_sent)

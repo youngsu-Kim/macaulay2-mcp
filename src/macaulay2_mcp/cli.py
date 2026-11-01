@@ -41,6 +41,9 @@ def run_selftest() -> int:
 
     print(f"[OK] found Macaulay2: {config.binary}")
     print(f"[OK] supported version (1.26.x): {config.version_str}")
+    from .config import provenance_label
+
+    print(f"[OK] kernel source: {provenance_label(config.binary)}")
 
     from .kernel import M2Session
 

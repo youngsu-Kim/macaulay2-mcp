@@ -555,6 +555,11 @@ class M2Session:
     def config_error(self) -> str | None:
         return self._config_error
 
+    @property
+    def config(self) -> M2Config | None:
+        """The kernel's configuration once discovered (None before start)."""
+        return self._config
+
     def _new_marker(self) -> str:
         # A valid M2 variable name (letters/digits), unique per call.
         return "m2MCP" + uuid.uuid4().hex[:12]

@@ -61,6 +61,20 @@ async def test_evaluate_via_mcp():
     assert "PolynomialRing" in text
 
 
+async def test_first_evaluate_announces_kernel_provenance():
+    """The first tool result carries the one-time kernel-source NOTE."""
+    async def get(session: ClientSession):
+        r1 = await session.call_tool("m2_evaluate", {"code": "1 + 1"})
+        r2 = await session.call_tool("m2_evaluate", {"code": "2 + 2"})
+        return r1.content[0].text, r2.content[0].text
+
+    first, second = await _with_server(get)
+    assert first.startswith("NOTE(kernel): this session runs Macaulay2")
+    assert "from the" in first
+    assert not second.startswith("NOTE(kernel)")  # announced once, not repeated
+    assert "NOTE(kernel)" not in second
+
+
 async def test_help_via_mcp():
     async def get(session: ClientSession):
         result = await session.call_tool("m2_help", {"topic": "groebnerBasis"})
