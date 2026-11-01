@@ -141,10 +141,11 @@ uvx macaulay2-mcp selftest
 ```
 
 ```text
-macaulay2-mcp 0.1.4 self-test
+macaulay2-mcp 0.1.5 self-test
 
 [OK] found Macaulay2: /opt/homebrew/bin/M2
 [OK] supported version (1.26.x): 1.26.06
+[OK] kernel source: official installation
 [OK] started session: prompt received
 [OK] evaluated 1 + 1: 1 + 1 / o1 = 2
 
