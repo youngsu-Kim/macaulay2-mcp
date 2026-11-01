@@ -156,7 +156,7 @@ after changing tools, handlers, kernel protocol, or startup flow.
 
 ## Commit trailer
 
-Every commit message ends with: `Assisted-by: <MODEL> hosted at the National Research Platform (https://nrp.ai)` where `<MODEL>` is the name and version of the model of the session making the commit (e.g. `GLM-5.3-NVFP4`, `Qwen3.8-Flash-Next-FP8`). Verify the running session's model identity before writing it — never reuse a name copied from earlier commits. Historical commits keep the trailer they were made with; corrections are forward-looking only.
+Every commit message ends with: `Assisted-by: <MODEL> hosted at the National Research Platform (https://nrp.ai)` where `<MODEL>` is the name and version of the model of the session making the commit (e.g. `GLM-5.3-NVFP4`, `Qwen3.8-Flash-Next-FP8`). Verify the running session's model identity before writing it — never reuse a name copied from earlier commits. Historical commits keep the trailer they were made with; corrections are forward-looking only. The same line goes at the end of every pull-request body.
 
 ## Sources policy (adopted 2026-10-22)
 

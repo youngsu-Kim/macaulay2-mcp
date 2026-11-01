@@ -99,6 +99,8 @@ Two design notes for local models: on multi-part asks, heavy-thinking models can
 
 *Why a tap/PPA, how to undo it, the alternative uv installer, and the full list of environment settings: [docs/installation.md](docs/installation.md).*
 
+*Kernel from PyPI instead of a system install: `uvx --with passagemath-macaulay2 macaulay2-mcp` — official installs take precedence when present ([details](docs/installation.md#passagemath-macaulay2-wheels-a-fully-pip-sourced-stack)).*
+
 **Add it to your AI client (harness):**
 
 * **Claude Code**
